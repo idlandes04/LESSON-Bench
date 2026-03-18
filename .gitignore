@@ -1,0 +1,28 @@
+# Environment files with secrets
+.env
+.env.*
+!.env.example
+
+# Model weights (huge files)
+models/
+llama.cpp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Human baseline data
+web_tool/results/

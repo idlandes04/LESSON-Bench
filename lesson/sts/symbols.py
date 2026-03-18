@@ -4,6 +4,10 @@ Selects symbols from Miscellaneous Technical and Geometric Shapes Unicode blocks
 that are unlikely to appear as formal systems in any training corpus.
 """
 
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Tuple
+
 # 20 candidate symbols from Miscellaneous Technical (U+2300-23FF)
 # and Geometric Shapes (U+25A0-25FF) / Geometric Shapes Extended (U+1F780-1F7FF)
 # Plus some from Miscellaneous Symbols (U+2600-26FF)
