@@ -1,29 +1,139 @@
 from __future__ import annotations
 
-"""Model registry for all LESSON benchmark configurations.
+"""Central model registry for all LESSON benchmark configurations.
+
+This is THE single source of truth for model configs across all providers.
+All model configuration dicts and factory functions live here.
 
 Providers:
-  - local:      llama-server instances (Qwen, Nemotron, etc.)
-  - gemini:     Google Gemini API (Flash, Pro)
   - openrouter: OpenRouter API (GPT, Claude, GLM, DeepSeek, etc.)
+  - gemini:     Google Gemini API (Flash, Pro)
   - lmstudio:   LM Studio local server (GGUF models)
-
-Development models (4 configs):
-  - qwen3.5-27b-think    — local, thinking ON  (enable_thinking=True)
-  - qwen3.5-27b-nothink  — local, thinking OFF (enable_thinking=False)
-  - gemini-pro            — API, thinking HIGH
-  - gemini-pro-nothink    — API, thinking LOW
-
-Both Qwen variants share ONE llama-server instance on the same port.
-Think/nothink is toggled per-request via extra_body.
+  - local:      llama-server instances (Qwen, Nemotron, etc.)
 """
 
+import os
 from typing import Any, Dict, Optional
 
+from lesson.models.base import LLMClient
 from lesson.models.gemini import GeminiClient
 from lesson.models.local import LocalClient
-from lesson.models.openrouter import OpenRouterClient, OPENROUTER_MODEL_CONFIGS
-from lesson.models.lmstudio import LMStudioClient, LMSTUDIO_MODEL_CONFIGS
+from lesson.models.openrouter import OpenRouterClient
+from lesson.models.lmstudio import LMStudioClient
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter model configurations
+# ---------------------------------------------------------------------------
+# Model IDs follow OpenRouter's "provider/model" convention.
+# max_tokens is set high (20000) to accommodate thinking models.
+# Verify slugs against https://openrouter.ai/models if adding new models.
+# ---------------------------------------------------------------------------
+
+OPENROUTER_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    # --- SB2 Pilot models (8 selected for hypothesis testing) ---
+    "glm-5": {
+        "model_id": "z-ai/glm-5",
+        "max_tokens": 20_000,
+    },
+    "gpt-5.3-codex": {
+        "model_id": "openai/gpt-5.3-codex",
+        "max_tokens": 20_000,
+    },
+    "gpt-5.3-chat": {
+        "model_id": "openai/gpt-5.3-chat",
+        "max_tokens": 20_000,
+    },
+    "claude-sonnet-4.6": {
+        "model_id": "anthropic/claude-sonnet-4.6",
+        "max_tokens": 20_000,
+    },
+    "deepseek-r1": {
+        "model_id": "deepseek/deepseek-r1",
+        "max_tokens": 20_000,
+    },
+    "deepseek-v3.2": {
+        "model_id": "deepseek/deepseek-v3.2",
+        "max_tokens": 20_000,
+    },
+    "claude-haiku-4.5": {
+        "model_id": "anthropic/claude-haiku-4.5",
+        "max_tokens": 20_000,
+    },
+    # --- Additional SB1 models (passed filter, deferred from SB2 pilot) ---
+    "claude-opus-4.6": {
+        "model_id": "anthropic/claude-opus-4.6",
+        "max_tokens": 20_000,
+    },
+    "gpt-5.4-mini": {
+        "model_id": "openai/gpt-5.4-mini",
+        "max_tokens": 20_000,
+    },
+    "minimax-m2.7": {
+        "model_id": "minimax/minimax-m2.7",
+        "max_tokens": 20_000,
+    },
+    "qwen-3.5-397b": {
+        "model_id": "qwen/qwen3.5-397b-a17b",
+        "max_tokens": 20_000,
+    },
+    "gemini-3.1-pro": {
+        "model_id": "google/gemini-3.1-pro-preview",
+        "max_tokens": 20_000,
+    },
+    "gemini-3.1-flash-lite": {
+        "model_id": "google/gemini-3.1-flash-lite-preview",
+        "max_tokens": 20_000,
+    },
+    "kimi-k2.5": {
+        "model_id": "moonshotai/kimi-k2.5",
+        "max_tokens": 20_000,
+    },
+    "grok-4.20": {
+        "model_id": "x-ai/grok-4.20-beta",
+        "max_tokens": 20_000,
+    },
+    # --- Models that failed SB1 filter (kept for reference) ---
+    "llama-3.3-70b": {
+        "model_id": "meta-llama/llama-3.3-70b-instruct",
+        "max_tokens": 20_000,
+    },
+    "llama-4-maverick": {
+        "model_id": "meta-llama/llama-4-maverick",
+        "max_tokens": 20_000,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# LM Studio model configurations
+# ---------------------------------------------------------------------------
+# Model IDs must match what LM Studio reports via GET /v1/models.
+# ---------------------------------------------------------------------------
+
+LMSTUDIO_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "lm-nemotron-nano": {
+        "model_id": "nvidia/nemotron-3-nano",
+        "max_tokens": 2048,
+        "port": 1234,
+    },
+    "lm-qwen3.5-35b-a3b": {
+        "model_id": "qwen/qwen3.5-35b-a3b",
+        "max_tokens": 2048,
+        "port": 1234,
+    },
+    "lm-qwen3.5-27b": {
+        "model_id": "qwen3.5-27b",
+        "max_tokens": 2048,
+        "port": 1234,
+    },
+    "lm-glm-4.7-flash": {
+        "model_id": "zai-org/glm-4.7-flash",
+        "max_tokens": 2048,
+        "port": 1234,
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Local llama-server model configurations
@@ -88,6 +198,7 @@ LOCAL_MODELS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+
 # ---------------------------------------------------------------------------
 # Gemini API model configurations
 # ---------------------------------------------------------------------------
@@ -123,6 +234,10 @@ GEMINI_MODELS: Dict[str, Dict[str, Any]] = {
 # are instantiated directly inside the Kaggle notebook environment.
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Factory functions (per-provider)
+# ---------------------------------------------------------------------------
 
 def get_local_client(name: str, **overrides: Any) -> LocalClient:
     """Instantiate a LocalClient by registry name."""
@@ -168,3 +283,47 @@ def get_lmstudio_client(name: str, **overrides: Any) -> LMStudioClient:
         )
     config = {**LMSTUDIO_MODEL_CONFIGS[name], **overrides}
     return LMStudioClient(name=name, **config)
+
+
+# ---------------------------------------------------------------------------
+# Unified factory
+# ---------------------------------------------------------------------------
+
+def get_provider_for(name: str) -> str:
+    """Auto-detect provider from model name by scanning all registries."""
+    if name in OPENROUTER_MODEL_CONFIGS:
+        return "openrouter"
+    if name in GEMINI_MODELS:
+        return "gemini"
+    if name in LMSTUDIO_MODEL_CONFIGS:
+        return "lmstudio"
+    if name in LOCAL_MODELS:
+        return "local"
+    raise KeyError(
+        f"Model {name!r} not found in any registry. "
+        f"Available: openrouter={sorted(OPENROUTER_MODEL_CONFIGS)}, "
+        f"gemini={sorted(GEMINI_MODELS)}, "
+        f"lmstudio={sorted(LMSTUDIO_MODEL_CONFIGS)}, "
+        f"local={sorted(LOCAL_MODELS)}"
+    )
+
+
+def get_client(provider: str, name: str, **kwargs: Any) -> LLMClient:
+    """Unified factory: dispatches to the right provider client.
+
+    Args:
+        provider: One of "openrouter", "gemini", "lmstudio", "local".
+        name: Model registry name (e.g. "gpt-5.3-codex", "gemini-flash").
+        **kwargs: Passed to the provider-specific factory (e.g. api_key, timeout).
+    """
+    dispatch = {
+        "openrouter": get_openrouter_client,
+        "gemini": get_gemini_client,
+        "lmstudio": get_lmstudio_client,
+        "local": get_local_client,
+    }
+    if provider not in dispatch:
+        raise ValueError(
+            f"Unknown provider {provider!r}. Valid: {sorted(dispatch)}"
+        )
+    return dispatch[provider](name, **kwargs)

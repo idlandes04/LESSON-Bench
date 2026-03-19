@@ -790,19 +790,20 @@ This finding is NOT a flaw — it's an additional finding about how multi-turn c
 
 *v11.0: Added no-feedback as 4th core condition. Extended to 12 turns. Added 4 mechanistic probe conditions. SB1 extended with N=16/N=32 for key models. Total items vary by model tier (core models get full battery, broad-scan models get SB1 only).*
 
-**Budget math (updated 2026-03-19 — post-SB1 scan):**
+**Budget math (updated 2026-03-19 — post-SB2 pilot):**
 - **Spent so far:**
   - Gemini Flash SB2 pilot (Day 1): ~$0.05
   - OpenRouter SB1 broad scan (19 models, 60 items each): <$10
-  - **Total spent: ~$10**
+  - OpenRouter SB2 pilot (8 models, N=3, 4 core conditions): ~$15-20
+  - **Total spent: ~$25-30**
 - **Remaining estimates:**
-  - OpenRouter SB2 pilot (8 models, 3 instances, 4 conditions): ~$15-20
-  - OpenRouter SB2 production (5-6 models, 25 instances): ~$50-100
-  - Kaggle SDK (2 models, full SB1 + SB2): ~$200-300
-  - **Total remaining: ~$265-420**
+  - Gemini Flash N=25 production run (via Gemini API, 4 conditions): ~$0.11
+  - Kaggle SDK production (5 models, N=25, 4 core conditions + extended): ~$200-400 (reserved from $500 Kaggle allocation)
+  - **Total remaining: ~$200-400**
 - Human baselines: **$0** (informal participants, GitHub Pages hosting)
 - Local models: **$0** (RTX 5090 via LM Studio)
-- **Total project estimate: ~$275-430**
+- **Total project estimate: ~$225-430**
+- **Strategy:** Run Gemini Flash at full statistical power (N=25) first via cheap Gemini API (~$0.11). Use those results to validate the eval protocol and refine hypotheses before spending any Kaggle SDK budget on the 5-model production run. Kaggle $500 allocation is reserved exclusively for the final production run — no exploratory spending.
 
 **Note:** Gemini-3.1-Pro consumed >50% of SB1 scan cost due to long reasoning traces (20K max_tokens). For SB2, use Gemini Flash where possible to manage cost. Kaggle SDK models run last to maximize remaining quota.
 
@@ -957,7 +958,9 @@ Each model tests a **specific hypothesis** about what drives in-context learning
 
 See `docs/observations.md` for full results table.
 
-### Phase 2 — SB2 Pilot (8 models selected, PENDING)
+**SB2 pilot (N=3) also complete.** 8 models × 4 core conditions × 3 instances × 12 turns = 1,152 exchanges. All results in SQLite DB (`results/lesson_bench.db`). Pilot confirmed pipeline works end-to-end but N=3 is statistically insufficient — 95% CIs on FLR are ±0.066, wider than the entire observed range of effects. Directional patterns only: Claude Sonnet 4.6 and DeepSeek-R1 show positive FLR, GPT-5.3 Chat shows negative FLR, but none are statistically significant at N=3.
+
+### Phase 2 — SB2 Pilot (8 models, COMPLETE at N=3)
 
 | Model | T2N8 | Hypothesis | Why |
 |-------|------|-----------|-----|
@@ -974,9 +977,17 @@ See `docs/observations.md` for full results table.
 
 **Deferred:** Grok (incomplete data), Flash-Lite (too low), Kimi/MiniMax (don't test unique hypotheses), Qwen-3-Coder local (anomalous). Can add back for production if pilot reveals something worth chasing.
 
-### Phase 3 — Production (full SB2 on 5-6 most informative models)
+### Phase 2.5 — Gemini Flash Production (N=25, NEXT)
 
-Run full 25-instance SB2 (4 core conditions) on models that produce the most interesting pilot patterns.
+Run Gemini 3 Flash at full statistical power (N=25, 4 core conditions) via Gemini API before touching the Kaggle budget. Flash is cheap (~$0.11) and serves as the baseline model (Google judge appeal). With N=25 we get 4% accuracy resolution per turn (vs 33% at N=3), smooth trajectory curves, and 95% CIs tight enough to detect effects as small as ±2.3 percentage points on FLR. This run informs:
+- Whether the eval protocol produces clean, interpretable results at scale
+- Whether Flash shows any feedback learning signal (baseline expectation: FLR ≈ 0)
+- Whether any modifications are needed before the expensive 5-model Kaggle run
+- Refinement of hypotheses H1-H18 based on the first real data
+
+### Phase 3 — Production (5 models via Kaggle SDK, $500 allocation)
+
+Run full 25-instance SB2 (4 core conditions) on 5 selected models via Kaggle Benchmarks SDK. Model selection informed by Flash N=25 results + pilot directional patterns. Kaggle $500 is reserved exclusively for this phase — no exploratory spending.
 
 ### Kaggle SDK Models (use quota — $50/day, $500/month)
 
@@ -1050,12 +1061,12 @@ Comparing quantized local models (Q4_K_M, Q5_K_M) with full-precision API models
 ### Scheduling (updated 2026-03-19)
 
 - **Day 1 (Mar 18): DONE.** STS generator, evaluation pipeline, SB2 pilot framework, LM Studio + OpenRouter clients built and validated. Gemini Flash SB2 pilot (3 instances, 3 conditions) completed.
-- **Day 2 (Mar 19): DONE.** Full SB1 broad scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed (log pruning race, Unicode, context size, JSON schema caching). 8-model SB2 pilot selection complete.
-- **Days 3-4 (Mar 20-21):** Run SB2 pilot (8 models, 3 instances, 4 core conditions). Run no-feedback + clean-context probes. Build analysis module.
-- **Days 5-7 (Mar 22-24):** Analyze SB2 pilot. Select 5-6 models for production. Run mechanistic probes on 2-3 models.
-- **Days 8-12 (Mar 25-29):** Production SB2 runs (25 instances, 4 core conditions) on selected models. Extended conditions on top 3-4.
-- **Days 13-16 (Mar 30-Apr 2):** Kaggle SDK models. Full statistical analysis. Visualizations.
-- **Days 17-28 (Apr 3-16):** Polish, writeup, submission.
+- **Day 2 (Mar 19): DONE.** Full SB1 broad scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed (log pruning race, Unicode, context size, JSON schema caching). 8-model SB2 pilot selection complete. SB2 pilot (8 models, N=3, 4 core conditions) completed via OpenRouter. Full codebase refactoring: consolidated model configs into registry, extracted shared runner infrastructure (CircuitBreaker, retry_with_backoff, resume), built SQLite results store, unified CLI (`python -m lesson`), filled package stubs, 160 tests. Built analysis pipeline with publication-quality PDF report generation (gap chart, 2×2 factorial, trajectory plots, Codex-vs-Chat comparison, model grouping). All pilot results imported to SQLite DB.
+- **Day 3 (Mar 20):** Code inspection and cleanup. Gemini 3 Flash production run (N=25, 4 core conditions) via Gemini API. This is the first statistically powered run (~3h, ~$0.11). Analyze Flash results for real signal before committing Kaggle budget.
+- **Days 4-5 (Mar 21-22):** Analyze Flash N=25 results. Evaluate whether eval protocol needs modification. Finalize 5-model selection for production. Adjust hypotheses based on Flash findings.
+- **Days 6-10 (Mar 23-27):** Production SB2 runs (N=25, 4 core conditions) on 5 selected models via Kaggle Benchmarks SDK ($500 allocation). Extended conditions on top 3.
+- **Days 11-14 (Mar 28-31):** Full statistical analysis. Cross-benchmark cognitive profiling. Visualizations.
+- **Days 15-28 (Apr 1-16):** Polish, writeup, submission.
 
 ---
 

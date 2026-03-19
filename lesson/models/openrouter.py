@@ -17,7 +17,7 @@ Based on OpenRouter API docs: https://openrouter.ai/docs
 import os
 import re
 import threading
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 import openai
 
@@ -137,6 +137,7 @@ class OpenRouterClient(LLMClient):
         api_key: Optional[str] = None,
         max_tokens: int = 20_000,
         max_retries: int = _MAX_RETRIES,
+        timeout: Optional[int] = None,
     ) -> None:
         self.name = name
         self._model_id = model_id
@@ -148,15 +149,19 @@ class OpenRouterClient(LLMClient):
                 "OpenRouter API key not provided and OPENROUTER_API_KEY env var is not set."
             )
 
-        self._client = openai.OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-            max_retries=max_retries,
-            default_headers={
+        client_kwargs: Dict[str, Any] = {
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": api_key,
+            "max_retries": max_retries,
+            "default_headers": {
                 "HTTP-Referer": "https://github.com/lesson-bench",
                 "X-Title": "LESSON-Bench",
             },
-        )
+        }
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+
+        self._client = openai.OpenAI(**client_kwargs)
 
     def prompt(self, text: str) -> str:
         """Single-turn completion with temperature=0."""
@@ -206,101 +211,18 @@ class OpenRouterClient(LLMClient):
 
 
 # ---------------------------------------------------------------------------
-# Model configurations for SB1/SB2 evaluation
-# ---------------------------------------------------------------------------
-# Model IDs follow OpenRouter's "provider/model" convention.
-# max_tokens is set high (20000) to accommodate thinking models.
-# Verify slugs against https://openrouter.ai/models if adding new models.
+# Backward-compatible re-exports (configs now live in lesson.models.registry)
 # ---------------------------------------------------------------------------
 
-OPENROUTER_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
-    # --- SB2 Pilot models (8 selected for hypothesis testing) ---
-    "glm-5": {
-        "model_id": "z-ai/glm-5",
-        "max_tokens": 20_000,
-    },
-    "gpt-5.3-codex": {
-        "model_id": "openai/gpt-5.3-codex",
-        "max_tokens": 20_000,
-    },
-    "gpt-5.3-chat": {
-        "model_id": "openai/gpt-5.3-chat",
-        "max_tokens": 20_000,
-    },
-    "claude-sonnet-4.6": {
-        "model_id": "anthropic/claude-sonnet-4.6",
-        "max_tokens": 20_000,
-    },
-    "deepseek-r1": {
-        "model_id": "deepseek/deepseek-r1",
-        "max_tokens": 20_000,
-    },
-    "deepseek-v3.2": {
-        "model_id": "deepseek/deepseek-v3.2",
-        "max_tokens": 20_000,
-    },
-    "claude-haiku-4.5": {
-        "model_id": "anthropic/claude-haiku-4.5",
-        "max_tokens": 20_000,
-    },
-    # --- Additional SB1 models (passed filter, deferred from SB2 pilot) ---
-    "claude-opus-4.6": {
-        "model_id": "anthropic/claude-opus-4.6",
-        "max_tokens": 20_000,
-    },
-    "gpt-5.4-mini": {
-        "model_id": "openai/gpt-5.4-mini",
-        "max_tokens": 20_000,
-    },
-    "minimax-m2.7": {
-        "model_id": "minimax/minimax-m2.7",
-        "max_tokens": 20_000,
-    },
-    "qwen-3.5-397b": {
-        "model_id": "qwen/qwen3.5-397b-a17b",
-        "max_tokens": 20_000,
-    },
-    "gemini-3.1-pro": {
-        "model_id": "google/gemini-3.1-pro-preview",
-        "max_tokens": 20_000,
-    },
-    "gemini-3.1-flash-lite": {
-        "model_id": "google/gemini-3.1-flash-lite-preview",
-        "max_tokens": 20_000,
-    },
-    "kimi-k2.5": {
-        "model_id": "moonshotai/kimi-k2.5",
-        "max_tokens": 20_000,
-    },
-    "grok-4.20": {
-        "model_id": "x-ai/grok-4.20-beta",
-        "max_tokens": 20_000,
-    },
-    # --- Models that failed SB1 filter (kept for reference) ---
-    "llama-3.3-70b": {
-        "model_id": "meta-llama/llama-3.3-70b-instruct",
-        "max_tokens": 20_000,
-    },
-    "llama-4-maverick": {
-        "model_id": "meta-llama/llama-4-maverick",
-        "max_tokens": 20_000,
-    },
-}
-
-
-def get_openrouter_client(
-    name: str, api_key: Optional[str] = None, **overrides: Any
-) -> OpenRouterClient:
-    """Instantiate an OpenRouterClient by registry name."""
-    if name not in OPENROUTER_MODEL_CONFIGS:
-        raise KeyError(
-            f"Unknown OpenRouter model {name!r}. "
-            f"Available: {sorted(OPENROUTER_MODEL_CONFIGS)}"
-        )
-    config = {**OPENROUTER_MODEL_CONFIGS[name], **overrides}
-    return OpenRouterClient(name=name, api_key=api_key, **config)
-
-
-def check_openrouter_key() -> bool:
-    """Check if an OpenRouter API key is available."""
-    return bool(os.environ.get("OPENROUTER_API_KEY"))
+def __getattr__(name: str) -> Any:
+    if name == "OPENROUTER_MODEL_CONFIGS":
+        from lesson.models.registry import OPENROUTER_MODEL_CONFIGS
+        return OPENROUTER_MODEL_CONFIGS
+    if name == "get_openrouter_client":
+        from lesson.models.registry import get_openrouter_client
+        return get_openrouter_client
+    if name == "check_openrouter_key":
+        def check_openrouter_key() -> bool:
+            return bool(os.environ.get("OPENROUTER_API_KEY"))
+        return check_openrouter_key
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -120,11 +120,11 @@ class GeminiMultiTurnSession(MultiTurnSession):
         self._model_id = model_id
         self._max_tokens = max_tokens
         self._thinking_level = thinking_level
-        self._history: List[Dict] = []
+        self._messages: List[Dict] = []
 
     def send(self, text: str, role: str = "user") -> str:
         """Append a message and generate a response from Gemini."""
-        self._history.append({
+        self._messages.append({
             "role": "user",
             "parts": [{"text": text}],
         })
@@ -132,14 +132,14 @@ class GeminiMultiTurnSession(MultiTurnSession):
         result = _api_call(
             api_key=self._api_key,
             model_id=self._model_id,
-            contents=self._history,
+            contents=self._messages,
             temperature=0.0,
             max_tokens=self._max_tokens,
             thinking_level=self._thinking_level,
         )
 
         response_text = _extract_answer(result)
-        self._history.append({
+        self._messages.append({
             "role": "model",
             "parts": [{"text": response_text}],
         })
@@ -147,7 +147,7 @@ class GeminiMultiTurnSession(MultiTurnSession):
 
     def send_json(self, text: str, role: str = "user") -> str:
         """Append a message and generate a JSON response from Gemini."""
-        self._history.append({
+        self._messages.append({
             "role": "user",
             "parts": [{"text": text}],
         })
@@ -155,7 +155,7 @@ class GeminiMultiTurnSession(MultiTurnSession):
         result = _api_call(
             api_key=self._api_key,
             model_id=self._model_id,
-            contents=self._history,
+            contents=self._messages,
             temperature=0.0,
             max_tokens=self._max_tokens,
             thinking_level=self._thinking_level,
@@ -163,7 +163,7 @@ class GeminiMultiTurnSession(MultiTurnSession):
         )
 
         response_text = _extract_answer(result)
-        self._history.append({
+        self._messages.append({
             "role": "model",
             "parts": [{"text": response_text}],
         })
@@ -172,14 +172,14 @@ class GeminiMultiTurnSession(MultiTurnSession):
     def inject(self, text: str, role: str = "assistant") -> None:
         """Inject a message into history without calling the API."""
         gemini_role = "model" if role == "assistant" else "user"
-        self._history.append({
+        self._messages.append({
             "role": gemini_role,
             "parts": [{"text": text}],
         })
 
     def reset(self) -> None:
         """Clear conversation history."""
-        self._history = []
+        self._messages = []
 
 
 class GeminiClient(LLMClient):

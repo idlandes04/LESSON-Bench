@@ -1,7 +1,8 @@
 """Tests for the STS generator, solver, and item generation pipeline."""
 
 import sys
-sys.path.insert(0, "/Users/isaaclandes/Documents/SRC/Kaggle-2026-AGI")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lesson.sts.types import RuleType, ItemType
 from lesson.sts.solver import solve, get_partial_rule_answers

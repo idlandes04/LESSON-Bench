@@ -199,49 +199,14 @@ class LMStudioClient(LLMClient):
 
 
 # ---------------------------------------------------------------------------
-# Model configurations for LM Studio evaluation
-# ---------------------------------------------------------------------------
-# These configs map friendly names to LM Studio model identifiers.
-# model_id should match what LM Studio shows in its model list.
-# max_tokens is constrained by local context window.
+# Backward-compatible re-exports (configs now live in lesson.models.registry)
 # ---------------------------------------------------------------------------
 
-LMSTUDIO_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
-    # Model IDs must match what LM Studio reports via GET /v1/models.
-    # Current loaded models (as of 2026-03-19):
-    #   nvidia/nemotron-3-nano, qwen/qwen3.5-35b-a3b, qwen3.5-27b,
-    #   zai-org/glm-4.7-flash, text-embedding-nomic-embed-text-v1.5
-    "lm-nemotron-nano": {
-        "model_id": "nvidia/nemotron-3-nano",
-        "max_tokens": 2048,
-        "port": 1234,
-    },
-    "lm-qwen3.5-35b-a3b": {
-        "model_id": "qwen/qwen3.5-35b-a3b",
-        "max_tokens": 2048,
-        "port": 1234,
-    },
-    "lm-qwen3.5-27b": {
-        "model_id": "qwen3.5-27b",
-        "max_tokens": 2048,
-        "port": 1234,
-    },
-    "lm-glm-4.7-flash": {
-        "model_id": "zai-org/glm-4.7-flash",
-        "max_tokens": 2048,
-        "port": 1234,
-    },
-}
-
-
-def get_lmstudio_client(
-    name: str, **overrides: Any
-) -> LMStudioClient:
-    """Instantiate a LMStudioClient by registry name."""
-    if name not in LMSTUDIO_MODEL_CONFIGS:
-        raise KeyError(
-            f"Unknown LM Studio model {name!r}. "
-            f"Available: {sorted(LMSTUDIO_MODEL_CONFIGS)}"
-        )
-    config = {**LMSTUDIO_MODEL_CONFIGS[name], **overrides}
-    return LMStudioClient(name=name, **config)
+def __getattr__(name: str):
+    if name == "LMSTUDIO_MODEL_CONFIGS":
+        from lesson.models.registry import LMSTUDIO_MODEL_CONFIGS
+        return LMSTUDIO_MODEL_CONFIGS
+    if name == "get_lmstudio_client":
+        from lesson.models.registry import get_lmstudio_client
+        return get_lmstudio_client
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

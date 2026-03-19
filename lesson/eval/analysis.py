@@ -131,7 +131,7 @@ def summarize_sb2_results(results: list[dict]) -> None:
     Shows per-turn accuracy for each condition, plus an FLR estimate.
 
     Expected keys in each result dict:
-        condition   (str)   "correction" | "practice"
+        condition   (str)   "correction" | "practice_only"
         turn        (int)   1-indexed turn number within the session
         correct     (bool)  whether the model answered correctly at this turn
         subject     (str)   optional subject/session identifier
@@ -185,7 +185,7 @@ def summarize_sb2_results(results: list[dict]) -> None:
 
     # ---- FLR estimate -----------------------------------------------------
     correction_rows = [r for r in results if r.get("condition") == "correction"]
-    practice_rows = [r for r in results if r.get("condition") == "practice"]
+    practice_rows = [r for r in results if r.get("condition") == "practice_only"]
     if correction_rows and practice_rows:
         flr = estimate_flr(correction_rows, practice_rows)
         print(f"\nFLR estimate: {flr:+.4f} (correction slope minus practice slope)\n")

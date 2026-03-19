@@ -45,6 +45,20 @@ from .interaction_log import InteractionLog
 
 
 # ---------------------------------------------------------------------------
+# Canonical condition lists (import from here, not redefined elsewhere)
+# ---------------------------------------------------------------------------
+
+CORE_CONDITIONS = ["correction", "practice_only", "error_only", "no_feedback"]
+
+ALL_CONDITIONS = [
+    "correction", "practice_only", "error_only", "no_feedback",
+    "explanation", "misleading",
+    "clean_context", "prompted_correction", "structured_correction",
+    "reformatted_correction",
+]
+
+
+# ---------------------------------------------------------------------------
 # Feedback generators
 # ---------------------------------------------------------------------------
 
@@ -529,21 +543,21 @@ def run_sb2_pilot(
                 # send_json already appended the user message to history
                 # before the API call failed — remove it to avoid
                 # double-injection when we fall back to plain send.
-                if hasattr(session, '_history') and session._history:
-                    session._history.pop()
+                if hasattr(session, '_messages') and session._messages:
+                    session._messages.pop()
                 raw_response = ""
 
             # If send_json returned empty (provider silently fails with JSON
             # schema), fall back to plain send
             if not raw_response.strip():
                 # Remove empty assistant reply from history if send_json added one
-                if hasattr(session, '_history') and session._history and \
-                   session._history[-1].get('role') == 'assistant' and \
-                   not session._history[-1].get('content', '').strip():
-                    session._history.pop()
+                if hasattr(session, '_messages') and session._messages and \
+                   session._messages[-1].get('role') == 'assistant' and \
+                   not session._messages[-1].get('content', '').strip():
+                    session._messages.pop()
                     # Also remove the user message that send_json added
-                    if session._history and session._history[-1].get('role') == 'user':
-                        session._history.pop()
+                    if session._messages and session._messages[-1].get('role') == 'user':
+                        session._messages.pop()
                 try:
                     raw_response = session.send(question, role="user")
                 except Exception as exc:
