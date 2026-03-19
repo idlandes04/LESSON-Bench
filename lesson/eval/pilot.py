@@ -14,6 +14,8 @@ v9.0+ improvements:
 """
 
 import random
+import concurrent.futures
+import threading
 from typing import Any, Dict, List, Optional
 
 from lesson.sts.generator import generate_dataset, format_training_examples
@@ -56,6 +58,81 @@ def _build_prompt(
 
 
 # ---------------------------------------------------------------------------
+# Single-item evaluation (used by both sequential and parallel runners)
+# ---------------------------------------------------------------------------
+
+def _eval_single_item(
+    client: Any,
+    tier: int,
+    n: int,
+    inst_idx: int,
+    item_idx: int,
+    item: TestItem,
+    examples_text: str,
+    alphabet: list,
+    sts_id: str,
+) -> Dict[str, Any]:
+    """Evaluate one test item against the model. Thread-safe."""
+    prompt = _build_prompt(n, examples_text, item.input_seq, alphabet)
+
+    try:
+        raw_response = client.prompt_json(prompt)
+    except Exception:
+        try:
+            raw_response = client.prompt(prompt)
+        except Exception:
+            raw_response = ""
+
+    model_answer = extract_answer(raw_response, mode="json", vocabulary=alphabet)
+    expected = normalize_answer(item.correct_output)
+    correct = model_answer == expected
+
+    return {
+        "tier": tier,
+        "n_examples": n,
+        "instance_idx": inst_idx,
+        "sts_id": sts_id,
+        "item_idx": item_idx,
+        "item_type": item.item_type.value,
+        "correct": correct,
+        "model_answer": model_answer,
+        "expected_answer": expected,
+        "input_seq": item.input_seq,
+        "raw_response": raw_response,
+        "vocabulary": alphabet,
+    }
+
+
+def _build_summary(all_results: List[Dict[str, Any]]) -> Dict:
+    """Build summary: tier -> n -> item_type -> {n_correct, n_total}."""
+    summary: Dict[int, Dict[int, Dict[str, Dict[str, int]]]] = {}
+    for r in all_results:
+        t = r["tier"]
+        n = r["n_examples"]
+        it = r["item_type"]
+        summary.setdefault(t, {}).setdefault(n, {}).setdefault(
+            it, {"n_correct": 0, "n_total": 0}
+        )
+        summary[t][n][it]["n_total"] += 1
+        if r["correct"]:
+            summary[t][n][it]["n_correct"] += 1
+    return summary
+
+
+def _print_summary(summary: Dict) -> None:
+    """Print the SB1 summary table."""
+    print("\n--- SB1 Pilot Summary ---")
+    for tier in sorted(summary):
+        for n in sorted(summary[tier]):
+            for it, counts in sorted(summary[tier][n].items()):
+                acc = counts["n_correct"] / counts["n_total"] if counts["n_total"] else 0.0
+                print(
+                    f"  tier={tier} N={n:2d} type={it}: "
+                    f"{counts['n_correct']}/{counts['n_total']} ({acc:.0%})"
+                )
+
+
+# ---------------------------------------------------------------------------
 # Core pilot runner
 # ---------------------------------------------------------------------------
 
@@ -67,6 +144,9 @@ def run_sb1_pilot(
     seq_length: int = 5,
 ) -> Dict[str, Any]:
     """Run SB1 pilot: learning curves across tiers and N values.
+
+    Automatically uses parallel inference when client.max_concurrent > 1
+    (e.g. LM Studio with n_parallel slots on a beefy GPU).
 
     For each (tier, N, instance), generates 5 test items and prompts the model.
     Uses structured JSON output as primary extraction, with symbol-aware and
@@ -86,6 +166,20 @@ def run_sb1_pilot(
             "model": client.name,
         }
     """
+    max_concurrent = getattr(client, "max_concurrent", 1)
+    if max_concurrent > 1:
+        return _run_sb1_parallel(client, tiers, n_values, n_instances, seq_length, max_concurrent)
+    return _run_sb1_sequential(client, tiers, n_values, n_instances, seq_length)
+
+
+def _run_sb1_sequential(
+    client: Any,
+    tiers: List[int],
+    n_values: List[int],
+    n_instances: int,
+    seq_length: int,
+) -> Dict[str, Any]:
+    """Original sequential SB1 runner."""
     all_results: List[Dict[str, Any]] = []
     model_name = getattr(client, "name", "unknown")
     log = InteractionLog(f"{model_name}_sb1")
@@ -121,53 +215,18 @@ def run_sb1_pilot(
                 alphabet = dataset.sts.alphabet
 
                 for item_idx, item in enumerate(dataset.test_items):
-                    prompt = _build_prompt(n, examples_text, item.input_seq, alphabet)
-
-                    # Primary: use JSON mode for structured output
-                    try:
-                        raw_response = client.prompt_json(prompt)
-                    except Exception as exc:
-                        print(f"  ERROR calling client.prompt_json: {exc}")
-                        # Fallback to plain prompt
-                        try:
-                            raw_response = client.prompt(prompt)
-                        except Exception as exc2:
-                            print(f"  ERROR calling client.prompt: {exc2}")
-                            raw_response = ""
-
-                    # Tiered extraction: JSON → symbol-aware → regex
-                    model_answer = extract_answer(
-                        raw_response,
-                        mode="json",
-                        vocabulary=alphabet,
+                    result = _eval_single_item(
+                        client, tier, n, inst_idx, item_idx, item,
+                        examples_text, alphabet, dataset.sts.id,
                     )
-
-                    expected = normalize_answer(item.correct_output)
-                    correct = model_answer == expected
-
-                    result = {
-                        "tier": tier,
-                        "n_examples": n,
-                        "instance_idx": inst_idx,
-                        "sts_id": dataset.sts.id,
-                        "item_idx": item_idx,
-                        "item_type": item.item_type.value,
-                        "correct": correct,
-                        "model_answer": model_answer,
-                        "expected_answer": expected,
-                        "input_seq": item.input_seq,
-                        "raw_response": raw_response,
-                        "vocabulary": alphabet,
-                    }
                     all_results.append(result)
 
-                    # Log the interaction for debugging
                     log.record(
-                        prompt=prompt,
-                        raw_response=raw_response,
-                        extracted=model_answer,
-                        expected=expected,
-                        correct=correct,
+                        prompt=_build_prompt(n, examples_text, item.input_seq, alphabet),
+                        raw_response=result["raw_response"],
+                        extracted=result["model_answer"],
+                        expected=result["expected_answer"],
+                        correct=result["correct"],
                         metadata={
                             "tier": tier, "n": n, "instance": inst_idx,
                             "item_type": item.item_type.value,
@@ -175,33 +234,110 @@ def run_sb1_pilot(
                         },
                     )
 
-                    status = "CORRECT" if correct else f"wrong (got {model_answer!r}, expected {expected!r})"
+                    status = "CORRECT" if result["correct"] else f"wrong (got {result['model_answer']!r}, expected {result['expected_answer']!r})"
                     print(f"  item {item_idx} [{item.item_type.value}] {item.input_seq} → {status}")
 
-    # Build summary: tier -> n -> item_type -> {n_correct, n_total}
-    summary: Dict[int, Dict[int, Dict[str, Dict[str, int]]]] = {}
-    for r in all_results:
-        t = r["tier"]
-        n = r["n_examples"]
-        it = r["item_type"]
-        summary.setdefault(t, {}).setdefault(n, {}).setdefault(
-            it, {"n_correct": 0, "n_total": 0}
+    summary = _build_summary(all_results)
+    _print_summary(summary)
+    log.close()
+
+    return {
+        "results": all_results,
+        "summary": summary,
+        "model": getattr(client, "name", "unknown"),
+        "log_file": str(log.filepath),
+    }
+
+
+def _run_sb1_parallel(
+    client: Any,
+    tiers: List[int],
+    n_values: List[int],
+    n_instances: int,
+    seq_length: int,
+    max_workers: int,
+) -> Dict[str, Any]:
+    """Parallel SB1 runner — submits items to a thread pool.
+
+    LM Studio (and llama-server with --parallel) can process multiple
+    requests concurrently.  This sends up to *max_workers* prompts at once,
+    dramatically speeding up SB1 which has no inter-item dependencies.
+    """
+    model_name = getattr(client, "name", "unknown")
+    log = InteractionLog(f"{model_name}_sb1")
+    print_lock = threading.Lock()
+
+    # Pre-generate all work items (datasets are cheap, model calls are not)
+    work_items = []
+    total_cells = len(tiers) * len(n_values) * n_instances
+    cell_idx = 0
+
+    for tier in tiers:
+        for n in n_values:
+            for inst_idx in range(n_instances):
+                cell_idx += 1
+                seed = tier * 10_000 + n * 100 + inst_idx
+
+                try:
+                    dataset: STSDataset = generate_dataset(
+                        tier=tier, seed=seed, n_examples=n,
+                        n_test_items=(3, 1, 1), seq_length=seq_length,
+                    )
+                except Exception as exc:
+                    with print_lock:
+                        print(f"  WARNING: generate_dataset failed (seed={seed}): {exc}")
+                    continue
+
+                examples_text = format_training_examples(dataset.training_examples)
+                alphabet = dataset.sts.alphabet
+
+                for item_idx, item in enumerate(dataset.test_items):
+                    work_items.append((
+                        tier, n, inst_idx, item_idx, item,
+                        examples_text, alphabet, dataset.sts.id,
+                    ))
+
+    print(f"SB1 parallel: {len(work_items)} items across {total_cells} cells, "
+          f"{max_workers} concurrent slots")
+
+    all_results: List[Dict[str, Any]] = []
+    completed_count = [0]  # mutable container for closure
+
+    def _do_item(args):
+        tier, n, inst_idx, item_idx, item, examples_text, alphabet, sts_id = args
+        return _eval_single_item(
+            client, tier, n, inst_idx, item_idx, item,
+            examples_text, alphabet, sts_id,
         )
-        summary[t][n][it]["n_total"] += 1
-        if r["correct"]:
-            summary[t][n][it]["n_correct"] += 1
 
-    # Print summary table
-    print("\n--- SB1 Pilot Summary ---")
-    for tier in sorted(summary):
-        for n in sorted(summary[tier]):
-            for it, counts in sorted(summary[tier][n].items()):
-                acc = counts["n_correct"] / counts["n_total"] if counts["n_total"] else 0.0
-                print(
-                    f"  tier={tier} N={n:2d} type={it}: "
-                    f"{counts['n_correct']}/{counts['n_total']} ({acc:.0%})"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_do_item, w): w for w in work_items}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            tier, n, inst_idx, item_idx, item, examples_text, alphabet, sts_id = futures[future]
+
+            # All shared state updates under the lock
+            with print_lock:
+                all_results.append(result)
+                log.record(
+                    prompt=_build_prompt(n, examples_text, item.input_seq, alphabet),
+                    raw_response=result["raw_response"],
+                    extracted=result["model_answer"],
+                    expected=result["expected_answer"],
+                    correct=result["correct"],
+                    metadata={
+                        "tier": tier, "n": n, "instance": inst_idx,
+                        "item_type": item.item_type.value,
+                        "input_seq": item.input_seq,
+                    },
                 )
+                completed_count[0] += 1
+                status = "CORRECT" if result["correct"] else f"wrong (got {result['model_answer']!r})"
+                print(f"  [{completed_count[0]}/{len(work_items)}] T{tier} N={n} i{inst_idx} "
+                      f"[{item.item_type.value}] {item.input_seq} → {status}")
 
+    summary = _build_summary(all_results)
+    _print_summary(summary)
     log.close()
 
     return {

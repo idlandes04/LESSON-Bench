@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from lesson.models.registry import get_local_client, get_gemini_client
+from lesson.models.registry import get_local_client, get_gemini_client, get_lmstudio_client
 from lesson.eval.pilot import run_sb1_pilot
 from lesson.eval.sb2_pilot import run_sb2_pilot
 
@@ -52,6 +52,20 @@ def check_local_server(port: int = 8080) -> bool:
     import urllib.request
     try:
         urllib.request.urlopen(f"http://localhost:{port}/health", timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+def check_lmstudio_server(port: int = 1234) -> bool:
+    """Check if LM Studio server is reachable (GET /v1/models)."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            f"http://localhost:{port}/v1/models",
+            headers={"Accept": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=3)
         return True
     except Exception:
         return False
@@ -70,15 +84,24 @@ def run_eval(args):
 
     if args.models:
         # Explicit model list: auto-detect type from registry
-        from lesson.models.registry import LOCAL_MODELS, GEMINI_MODELS
+        from lesson.models.registry import LOCAL_MODELS, GEMINI_MODELS, LMSTUDIO_MODELS
         for name in args.models.split(","):
             name = name.strip()
             if name in LOCAL_MODELS:
                 models.append(("local", name))
+            elif name in LMSTUDIO_MODELS:
+                models.append(("lmstudio", name))
             elif name in GEMINI_MODELS:
                 models.append(("gemini", name))
             else:
                 print(f"WARNING: Unknown model {name!r}, skipping")
+    elif args.lmstudio_only:
+        if check_lmstudio_server(1234):
+            models.append(("lmstudio", "lmstudio-qwen3.5-27b-think"))
+            models.append(("lmstudio", "lmstudio-qwen3.5-27b-nothink"))
+        else:
+            print("WARNING: LM Studio server not running on port 1234.")
+            print("  Start LM Studio and load a model first.")
     elif args.gemini_only:
         models.append(("gemini", "gemini-pro"))
         models.append(("gemini", "gemini-pro-nothink"))
@@ -92,8 +115,12 @@ def run_eval(args):
         if check_local_server(8080):
             models.append(("local", "qwen3.5-27b-think"))
             models.append(("local", "qwen3.5-27b-nothink"))
+        elif check_lmstudio_server(1234):
+            print("NOTE: llama-server not found, using LM Studio on port 1234.")
+            models.append(("lmstudio", "lmstudio-qwen3.5-27b-think"))
+            models.append(("lmstudio", "lmstudio-qwen3.5-27b-nothink"))
         else:
-            print("WARNING: llama-server not running on port 8080.")
+            print("WARNING: No local server running (llama-server:8080 / LM Studio:1234).")
             print("  Continuing with Gemini models only.\n")
         models.append(("gemini", "gemini-pro"))
         models.append(("gemini", "gemini-pro-nothink"))
@@ -118,6 +145,8 @@ def run_eval(args):
         try:
             if model_type == "local":
                 client = get_local_client(model_name)
+            elif model_type == "lmstudio":
+                client = get_lmstudio_client(model_name)
             else:
                 client = get_gemini_client(model_name)
         except Exception as e:
@@ -239,7 +268,9 @@ def main():
     parser.add_argument("--models", default="",
                         help="Comma-separated model names (e.g. gemini-flash,gemini-pro)")
     parser.add_argument("--local-only", action="store_true",
-                        help="Only run local Qwen models")
+                        help="Only run local Qwen models (llama-server)")
+    parser.add_argument("--lmstudio-only", action="store_true",
+                        help="Only run models via LM Studio (port 1234)")
     parser.add_argument("--gemini-only", action="store_true",
                         help="Only run Gemini API models")
     parser.add_argument("--sb1-only", action="store_true",
