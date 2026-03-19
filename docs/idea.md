@@ -1,12 +1,12 @@
 # LESSON (Learning from Error Signals in Symbolic Operations) - Spec Sheet
 ## Kaggle "Measuring AGI" Competition | Learning Track
-### Version 10.2
+### Version 11.0
 
 ---
 
 ## ONE-SENTENCE PITCH
 
-ALP applies the first controlled 2×2 factorial decomposition of corrective feedback to in-context learning — on contamination-proof symbolic tasks, isolating exactly which component of feedback (error signal vs. correct answer) drives any observed learning, profiled across 9 model configurations with human baselines.
+ALP applies the first controlled 2×2 factorial decomposition of corrective feedback to in-context learning — on contamination-proof symbolic tasks, isolating exactly which component of feedback (error signal vs. correct answer) drives any observed learning, profiled across 15+ model configurations (hypothesis-driven selection spanning scale, code-tuning, and reasoning-training) with human baselines and mechanistic probes into *why* models fail to use error signals.
 
 ---
 
@@ -369,7 +369,7 @@ Example micro-grammar:
 
 **Cost:** ~105 × 4 Kaggle models × ~$0.03 = ~$13. Free on local models.
 
-**Why 7 grammars is sufficient:** The correlation is computed over 9 model-level rank positions. With 7 grammars × 15 items = 105 items per model, per-model accuracy estimates are stable enough for reliable ranking. The v9.0 expansion to 15 grammars bought marginal validity at the cost of 8+ hours of design and debugging time better spent on SB2.
+**Why 7 grammars is sufficient:** The correlation is computed over 15+ model-level rank positions. With 7 grammars × 15 items = 105 items per model, per-model accuracy estimates are stable enough for reliable ranking. The v9.0 expansion to 15 grammars bought marginal validity at the cost of 8+ hours of design and debugging time better spent on SB2.
 
 **Why not a third substrate (arithmetic-novel-ops):** Two substrates (STS + micro-grammar) with rank-order correlation is sufficient for validity. Adding a third substrate type means designing, implementing, and validating another system within a 4-week timeline — scope creep that doesn't strengthen the 2×2 factorial headline.
 
@@ -410,6 +410,8 @@ Example micro-grammar:
 
 **THIS IS THE HEADLINE CONTRIBUTION.** Every ICL study provides correct examples. ALP is the first benchmark applying controlled factorial decomposition to corrective feedback, revealing whether models benefit from different *types* of feedback. 80% of polish and analysis attention goes here.
 
+**v11.0 addition:** Beyond measuring WHETHER models learn from feedback, SB2 now probes WHY they don't. Four mechanistic probe conditions (clean-context, prompted-correction, structured-correction, reformatted-correction) isolate the mechanism behind feedback blindness — is it context pollution from wrong answers, lack of metacognitive triggers, or format sensitivity to conversational vs. code-like error presentation?
+
 ### SB2 Design: Depth Over Breadth
 
 **Critical design decision:** SB2 concentrates statistical power on 1-2 tiers rather than spreading across 4.
@@ -426,6 +428,22 @@ After the SB1 pilot (Week 1), identify the ONE tier where the target model has *
 ### Protocol: Dual Implementation (v9.0)
 
 v9.0+ builds **both** a native multi-turn implementation and a single-prompt-with-history fallback. One is selected for production after pilot testing.
+
+**Clean-context implementation note (v11.0):** The clean-context condition is always implemented as single-prompt-with-history by design — it strips the model's wrong guesses and presents accumulated correct pairs as additional training examples:
+
+```python
+def clean_context_prompt(examples_text, accumulated_correct_pairs, test_input, turn_num):
+    """Clean-context: correct pairs formatted as additional training examples."""
+    additional = "\n".join([f"{inp} → {out}" for inp, out in accumulated_correct_pairs])
+    return f"""Below are {8 + turn_num} examples of a symbolic transformation system.
+Study the pattern, then predict the output for the final input.
+
+{examples_text}
+{additional}
+
+Input: {test_input}
+Respond with the output symbol sequence only."""
+```
 
 **Implementation A — Native Multi-Turn (preferred if SDK is stable):**
 
@@ -520,30 +538,61 @@ Respond with the output symbol sequence only."""
 
 ### Experimental Conditions: The 2×2 Factorial + Extensions
 
-The five conditions form a principled experimental design. The core four conditions constitute a **2×2 factorial** crossing evaluation signal × answer visibility:
+The conditions form a principled experimental design. The core four conditions constitute a **true 2×2 factorial** crossing evaluation signal × answer visibility — all in the same multi-turn conversational format:
 
 |  | Answer NOT shown | Answer shown |
 |--|--|--|
-| **NOT evaluated** | *(SB1 baseline — independent prompts)* | **Practice-only** |
+| **NOT evaluated** | **No-feedback** | **Practice-only** |
 | **Evaluated** | **Error-only** | **Correction** |
 
-The Explanation and Misleading conditions extend the design beyond the 2×2:
+**v11.0 change: No-feedback replaces the SB1 single-prompt baseline in the 2×2.** Previously, the "not evaluated / answer not shown" cell was the SB1 baseline, which used a different format (single-prompt, no multi-turn). This confounded format with condition. The new **no-feedback** condition uses the same multi-turn conversation but gives zero information after each guess — just "Next question." The conversation history accumulates (the model sees its own guesses) but receives no new information. This creates a clean 2×2 where format is held constant across all four cells.
+
+The clean 2×2 decomposition becomes:
+- **Answer effect** = (Practice-only + Correction)/2 − (No-feedback + Error-only)/2
+- **Evaluation effect** = (Error-only + Correction)/2 − (No-feedback + Practice-only)/2
+- **Interaction** = does evaluation help MORE when the answer is also shown?
+
+The Explanation, Misleading, and Mechanistic Probe conditions extend the design beyond the 2×2:
+
+**Core 2×2 conditions (run at full 25 instances on all production models):**
 
 | Condition | What model receives after each attempt | Tests... |
 |---|---|---|
 | **Correction** | "Correct!" / "Incorrect, answer is X" | Core error-driven learning — can the model update from being told the right answer? |
-| **Explanation** | "Correct!" / "Incorrect, answer is X because [rule]" | Whether *explanatory* feedback produces stronger learning than correction alone. Maps to Hattie & Timperley's feedback hierarchy. **Pre-registered as Alazraki replication probe** — EB may be negative (replicating Alazraki et al. 2025's finding that rationales can hurt LLM performance on novel substrates). |
 | **Practice-only** | "The output for {input} is X. Next question." (correct answer shown, model's attempt NOT evaluated) | Control baseline — both correction and practice-only see the same correct input→output pairs. The ONLY difference is whether the model gets told "you were wrong." Isolates the error signal from additional-example effects. |
 | **Error-only** | "Correct!" / "Incorrect." (evaluation given, correct answer NOT shown) | Whether the pure error signal — without new information — triggers deeper re-examination of initial examples. Bridges to Alazraki et al. 2025. If models improve from this alone, that's remarkable evidence of error-signal processing. |
+| **No-feedback** | "Next question." (nothing revealed — no evaluation, no answer) | Pure multi-turn format baseline. Isolates whether the multi-turn conversation format itself (accumulating the model's own guesses in context) helps or hurts relative to SB1 single-prompt. **Critical for explaining the SB2 < SB1 gap.** |
+
+**Extended conditions (run at full 25 instances on top 3-4 models):**
+
+| Condition | What model receives after each attempt | Tests... |
+|---|---|---|
+| **Explanation** | "Correct!" / "Incorrect, answer is X because [rule]" | Whether *explanatory* feedback produces stronger learning than correction alone. Maps to Hattie & Timperley's feedback hierarchy. **Pre-registered as Alazraki replication probe** — EB may be negative (replicating Alazraki et al. 2025's finding that rationales can hurt LLM performance on novel substrates). |
 | **Misleading** | Correct feedback on 9/12 rounds, wrong feedback on 3/12 | Feedback *discrimination* — can the model detect and resist bad corrections? Does it blindly accept all feedback or evaluate critically? **Reduced to 15 STS instances at primary tier to concentrate power on the core 2×2.** |
 
-**Why the 2×2 matters — THE CORE ANALYTICAL WEAPON:** The factorial design isolates two components of feedback:
-- **Evaluation effect** = Correction − Practice-only = benefit of being told "you were right/wrong"
-- **Answer effect** = Correction − Error-only = benefit of seeing the correct answer
-- **Total feedback effect** = Correction − SB1 baseline = combined benefit
+**Mechanistic probe conditions (run at 3-5 instances on 2-3 models, pilot only):**
+
+| Condition | What model receives | Tests... |
+|---|---|---|
+| **Clean-context** | Same information as correction, but implemented as single-prompt-with-history where only correct pairs are included (formatted as additional training examples). The model's wrong guesses are stripped entirely. | **Context pollution hypothesis:** If clean-context >> correction, wrong answers in conversation history are poisoning performance. The model CAN use feedback information, but only when presented as clean examples. Also serves as a functional SB1-at-N=16 data point. |
+| **Prompted-correction** | Same as correction, but after feedback: "Before answering the next question, briefly state what pattern you think explains why your previous answer was wrong." | **Metacognitive trigger hypothesis:** If prompted-correction > correction, models CAN process error signals but don't do so spontaneously — they need explicit prompting to reflect. |
+| **Structured-correction** | Same information as correction, formatted as code test output: `TEST FAILED\nInput: ◈⬡⧫\nExpected: ⟐◈⬡\nYour output: ⟐⟐⟐\nDiff: position 1 (expected ◈, got ⟐)...` | **Training data format hypothesis:** If structured-correction > correction, models have learned to process error signals in code-like formats but not conversational ones. Direct implications for agentic feedback system design. |
+| **Reformatted-correction** | Same feedback information, but correct answer formatted as an additional example: "Example: ◈⬡⧫ → ⟐◈⬡" (no "Incorrect" framing) | **Format sensitivity:** Isolates whether the model can parse conversational corrections vs. clean example format. |
+
+**Why the 2×2 matters — THE CORE ANALYTICAL WEAPON:** The factorial design isolates two components of feedback with proper marginal averaging:
+- **Evaluation effect** = (Error-only + Correction)/2 − (No-feedback + Practice-only)/2 = benefit of being told "you were right/wrong"
+- **Answer effect** = (Practice-only + Correction)/2 − (No-feedback + Error-only)/2 = benefit of seeing the correct answer
+- **Interaction** = Correction − Practice-only − Error-only + No-feedback = does evaluation help MORE when the answer is also shown?
 - If Evaluation effect > Answer effect: the error signal itself is what drives learning
 - If Answer effect > Evaluation effect: models mainly benefit from seeing more correct examples
 - **This factorial decomposition has never been applied to corrective feedback in in-context learning.** It is the methodological contribution that makes ALP unique.
+
+**Why no-feedback is critical (v11.0):** It directly explains the SB2 < SB1 gap observed in pilot data (correction at 38% vs. SB1 single-prompt at 50%). If no-feedback scores lower than SB1, the multi-turn format itself hurts (context pollution from the model's own wrong answers). If no-feedback matches SB1, the format is neutral and something else explains the gap. Without this cell, the 2×2 decomposition conflates format effects with feedback effects.
+
+**Why clean-context is the key mechanistic probe:** In the correction condition, by Turn 7 the model sees 7 wrong answers interspersed with 7 correct answers. The wrong answers may interfere with pattern induction — the model tries to induce rules from a context containing both correct and incorrect mappings. Clean-context strips this pollution:
+- If clean-context >> correction: Wrong answers poison performance. The model CAN use feedback information when presented cleanly. Finding: "Models can learn from additional examples but cannot distinguish correct from incorrect information in their own conversation history."
+- If clean-context ≈ correction: Context pollution isn't the issue. The model genuinely hits a ceiling.
+- If clean-context matches SB1 at N=16: The model follows its learning curve, and SB2 adds nothing beyond "more examples."
 
 **Why practice-only must show the correct answer:** If practice-only said only "Next question" (no new information), any improvement in the correction condition could simply be "more examples help" — which SB1 already measures. By giving practice-only the same correct answer but without evaluating the model's attempt, we isolate the *error signal* as the variable.
 
@@ -553,17 +602,23 @@ The Explanation and Misleading conditions extend the design beyond the 2×2:
 - **Which 3 rounds are misleading:** Seeded per STS instance (seed = hash of STS spec). Fixed across models so results are comparable. Spread across early/middle/late turns (one from rounds 1-4, one from 5-8, one from 9-12) to test temporal effects.
 - **What wrong answer is used:** The partial-rule answer (from the SB1 partial-rule simulator) where available — this is a *plausibly wrong* answer that a heuristic-learner might accept. Where no partial-rule answer exists for the test input, a random valid-length symbol sequence from the STS alphabet is used.
 
-### Dataset (v10.0)
+### Dataset (v11.0)
 
 - **Primary tier** (pilot-calibrated, default Tier 3):
-  - Core 2×2 + Explanation: 4 conditions × 25 STS instances × 12 turns = **1,200 exchanges**
-  - Misleading (reduced): 1 condition × 15 STS instances × 12 turns = **180 exchanges**
-  - **Primary subtotal: 1,380 exchanges**
+  - Core 2×2: 4 conditions × 25 STS instances × 12 turns = **1,200 exchanges**
+  - Extended (Explanation + Misleading): 2 conditions × 25/15 STS instances × 12 turns = **480 exchanges** (top 3-4 models only)
+  - **Primary subtotal: 1,680 exchanges per model**
+- **Mechanistic probes** (pilot only, 2-3 models):
+  - 4 probe conditions × 3-5 STS instances × 12 turns = **144-240 exchanges**
 - **Secondary tier** (adjacent, if budget):
-  - Core 2×2 + Explanation: 4 conditions × 15 STS instances × 12 turns = **720 exchanges**
-  - Misleading (reduced): 1 condition × 10 STS instances × 12 turns = **120 exchanges**
-  - **Secondary subtotal: 840 exchanges**
-- **Total SB2: 2,220 multi-turn exchanges**
+  - Core 2×2: 4 conditions × 15 STS instances × 12 turns = **720 exchanges**
+  - **Secondary subtotal: 720 exchanges**
+- **Total SB2 per model: ~1,200-2,400 multi-turn exchanges** (depending on model tier)
+- **Total SB2 across 15+ models: ~25,000-35,000 exchanges**
+
+**v11.0 change:** Extended from 8 to 12 turns per sequence (spec always said 12, pilot used 8). More turns = more data per instance = more power per model. Added no-feedback as fourth core condition. Mechanistic probes (conditions 7-10) do not go on the leaderboard — they appear in "Technical Details" and "Results & Insights" as evidence about WHY FLR ≈ 0.
+
+**Critical:** Use the SAME 3 STS instances for ALL pilot runs across ALL models and conditions. Per-instance difficulty is controlled when comparing Gemini vs Llama vs DeepSeek on identical instances. Different instances for different models would confound model effects with instance effects.
 
 ### Scoring
 
@@ -572,30 +627,38 @@ The Explanation and Misleading conditions extend the design beyond the 2×2:
    - FLR ~ 0: Error signal adds nothing beyond additional examples
    - FLR < 0: Being told you're wrong actively harms performance
 
-2. **Explanation Benefit (EB):** Accuracy in explanation condition minus correction condition, averaged over turns 7-12.
+2. **2×2 Factorial Decomposition (v11.0 — proper marginal averaging):**
+   - **Answer effect** = (Practice-only + Correction)/2 − (No-feedback + Error-only)/2
+   - **Evaluation effect** = (Error-only + Correction)/2 − (No-feedback + Practice-only)/2
+   - **Interaction** = Correction − Practice-only − Error-only + No-feedback
+   - All computed with bootstrap 95% CIs (resample STS instances)
+
+3. **Explanation Benefit (EB):** Accuracy in explanation condition minus correction condition, averaged over turns 7-12.
    - EB > 0: Model benefits from knowing *why* it's wrong
    - EB ~ 0: Explanation adds nothing beyond correction
    - **EB < 0: Explanation actively hurts — replicating Alazraki et al. 2025 on novel substrates (pre-registered as a possible and publishable outcome)**
 
-3. **Error-Only Learning Rate (EOLR):** Slope of accuracy in error-only condition. Measures whether the pure error signal triggers any improvement.
+4. **Error-Only Learning Rate (EOLR):** Slope of accuracy in error-only condition. Measures whether the pure error signal triggers any improvement.
    - EOLR > 0: Model improves from error signals alone (re-examines initial examples)
    - EOLR ~ 0: Error signal without correction is useless
-   - *The 2×2 decomposition:* Correction slope − EOLR = answer effect; Correction slope − Practice-only slope = evaluation effect.
 
-4. **Misleading Resistance (MR):** Accuracy on non-misleading rounds in misleading condition, relative to correction condition.
+5. **Misleading Resistance (MR):** Accuracy on non-misleading rounds in misleading condition, relative to correction condition.
    - MR ~ 1.0: Appropriately filters bad feedback
    - MR < 1.0: Bad feedback poisons good feedback too
 
-5. **Feedback Composite:** `0.40 * FLR_norm + 0.20 * EB_norm + 0.20 * EOLR_norm + 0.20 * MR_norm`
+6. **Feedback Composite:** `0.40 * FLR_norm + 0.20 * EB_norm + 0.20 * EOLR_norm + 0.20 * MR_norm`
 
-### Discriminatory Power Insurance (v10.0)
+### Discriminatory Power Insurance (v11.0)
 
 Even if the primary FLR ≈ 0 for all models (the most likely null result), the benchmark guarantees discrimination through multiple independent axes:
 
-1. **Trajectory shape across 5 conditions:** Even at FLR ≈ 0, the 12-turn accuracy profile may differ across conditions and models — one model might show a brief improvement on turns 3-5 before regressing, while another stays flat. The per-turn trajectory plot captures this visually.
-2. **Condition-specific effects:** EB, EOLR, and MR are independent of FLR. Models may show identical FLR but diverge on explanation sensitivity, error-signal processing, or misleading resistance.
-3. **SB1 strategy profiles:** RII, HTR, and learning curves provide 3+ additional discrimination axes at zero additional cost.
-4. **The 2×2 decomposition itself:** Even if total feedback effect is small, the *ratio* of evaluation effect to answer effect can differ across models. One model might show 60% answer-driven while another shows 80% answer-driven — discriminatory even under small absolute effects.
+1. **Trajectory shape across conditions:** Even at FLR ≈ 0, the 12-turn accuracy profile may differ across conditions and models — one model might show a brief improvement on turns 3-5 before regressing, while another stays flat. The per-turn trajectory plot captures this visually.
+2. **Model grouping effects (v11.0):** Even if individual FLR ≈ 0, the *distribution* of FLR across model groups (code-tuned vs chat, reasoning vs base) may differ. Permutation tests detect group-level effects that per-model tests miss.
+3. **Condition-specific effects:** EB, EOLR, and MR are independent of FLR. Models may show identical FLR but diverge on explanation sensitivity, error-signal processing, or misleading resistance.
+4. **Mechanistic probe results (v11.0):** Clean-context vs correction, structured vs conversational feedback — these reveal *why* FLR ≈ 0, even if they don't change the headline.
+5. **SB1 strategy profiles:** RII, HTR, and learning curves provide 3+ additional discrimination axes at zero additional cost.
+6. **The 2×2 decomposition itself:** Even if total feedback effect is small, the *ratio* of evaluation effect to answer effect can differ across models. One model might show 60% answer-driven while another shows 80% answer-driven — discriminatory even under small absolute effects.
+7. **No-feedback baseline (v11.0):** The no-feedback condition reveals whether multi-turn format itself helps or hurts, independent of feedback content. This is a new discrimination axis.
 
 ### Statistical Power
 
@@ -611,10 +674,12 @@ With concentrated design (25 STS instances at primary tier for core conditions):
 - **True learner:** Correction curve rises, diverging from practice-only
 - **Slow learner:** Correction rises only in turns 8-12
 - **Feedback-blind:** All conditions track together (both correction and practice-only improve at same rate — models learn from examples, not from error signal)
+- **Format-degraded:** No-feedback < SB1 single-prompt baseline — multi-turn format itself hurts (context pollution from own wrong answers)
 - **Feedback-fragile:** Misleading crashes all-round accuracy
 - **Explanation-sensitive:** Explanation rises faster than correction
 - **Explanation-hurt:** Explanation rises SLOWER than correction (Alazraki replication)
 - **Error-signal responder:** Error-only shows improvement (remarkable if observed)
+- **Context-pollution-sensitive:** Clean-context >> correction — wrong answers in history poison performance (mechanistic probe)
 
 **Why judges will care:** The competition description *literally* says: "Can the model update its beliefs when given corrective feedback, or does it perseverate on initial answers?" This sub-benchmark was built to answer that exact question.
 
@@ -633,7 +698,7 @@ Two possible findings, both novel:
 - **Positive association:** Suggests a general "learning quality" factor — models that learn deeply also learn interactively. The RII-FLR axis is a single dimension of learning capability.
 - **No association:** Strategy and feedback responsiveness are independent dimensions. A model can be a rule-inducer yet feedback-blind (brittle genius), or a heuristic-matcher that benefits from corrections (teachable but shallow). This is the more interesting finding because it means you need both metrics to characterize a model.
 
-**Important statistical note (v10.0):** With N=9 model configurations, any correlation is exploratory and underpowered for inferential testing. The 2D cognitive map is presented as a **descriptive visualization** — the pattern across models tells the story visually. Spearman's rho is reported for completeness but not treated as an inferential test.
+**Important statistical note (v11.0):** With N=15+ model configurations, cross-model correlations become more meaningful than in v10.0 (N=9). The 2D cognitive map is still primarily a **descriptive visualization**, but Spearman's rho is now adequately powered for moderate effects. Additionally, the hypothesis-driven model grouping (code vs chat, reasoning vs base) enables permutation tests for group-level differences.
 
 ### The 2D Cognitive Map
 
@@ -649,7 +714,7 @@ learning)         |  feedback-learner   feedback-blind
                      RII (rule induction)
 ```
 
-Each model is plotted as a point in this space. Human baselines define the target quadrant (high RII, high FLR). The quadrant a model falls into is its **cognitive phenotype** — a compact characterization of how it learns. The visual clustering (or dispersion) across models is the primary evidence, not the correlation coefficient.
+Each model is plotted as a point in this space, **color-coded by training type** (code-tuned, chat-tuned, reasoning-RL, base). Human baselines define the target quadrant (high RII, high FLR). The quadrant a model falls into is its **cognitive phenotype** — a compact characterization of how it learns. With 15+ models (v11.0), visual clustering by training type becomes the primary evidence: do code-tuned models cluster in a different quadrant than chat models?
 
 ### The Cognitive Profile Radar
 
@@ -681,33 +746,79 @@ strategy_keywords = {
 
 ---
 
+## THE SB2 < SB1 GAP: INVESTIGATION AND MECHANISTIC PROBES (v11.0)
+
+### The Finding
+
+Pilot data shows SB2 correction accuracy at 38% is BELOW SB1 single-prompt accuracy at 50%, despite the model having MORE information (original 8 examples plus accumulated correct pairs from feedback). Something is actively hurting performance.
+
+### Candidate Explanations
+
+1. **Context pollution from wrong answers:** By Turn 7, the model sees 7 wrong answers interspersed with 7 correct answers. The wrong answers interfere with pattern induction — the model can't fully distinguish correct from incorrect mappings despite "Incorrect" labels.
+
+2. **Multi-turn format degradation:** The conversational format itself (system prompt → user → assistant → user → ...) may be less effective for pattern induction than a single prompt with all examples presented together.
+
+3. **Lost-in-the-middle effect:** As conversation grows, attention over original training examples decreases. The model loses track of early context.
+
+4. **Novel substrate interaction:** The format effect may be specific to novel symbolic tasks (STS) and not present on familiar tasks.
+
+### How the New Conditions Test Each Explanation
+
+| Explanation | Test | Condition | Expected result if explanation is correct |
+|---|---|---|---|
+| Context pollution | Strip wrong answers from history | **Clean-context** | Clean-context >> correction |
+| Format degradation | Compare no-feedback to SB1 single-prompt | **No-feedback** | No-feedback < SB1 baseline |
+| Lost-in-the-middle | Re-present training examples at end of prompt before question | **(Manual test on 1 instance)** | Re-presentation helps |
+| Substrate-specific | Run same protocol on familiar arithmetic task | **(Optional probe, if time)** | FLR > 0 on arithmetic, FLR ≈ 0 on STS |
+
+### Format Sensitivity Sub-Experiment (v11.0)
+
+Run 1 STS instance where feedback is formatted in three ways:
+1. **Conversational:** "Incorrect. The correct output is ⟐◈⬡."
+2. **Tabular:** "Input: ◈⬡⧫ | Correct: ⟐◈⬡ | Your answer: ⟐⟐⟐ | Result: FAIL"
+3. **Example-formatted:** "Example: ◈⬡⧫ → ⟐◈⬡"
+
+Same information content, different surface format. If (3) >> (1), the model can't parse conversational corrections into usable evidence.
+
+### Framing for Writeup
+
+This finding is NOT a flaw — it's an additional finding about how multi-turn conversation interacts with in-context learning. Frame as: "Models not only fail to learn from corrections, but the multi-turn correction process itself degrades performance relative to single-prompt learning. Clean-context analysis reveals that [context pollution / format degradation / attention decay] is the mechanism."
+
+---
+
 ## COMPLETE BENCHMARK ARCHITECTURE
 
-| Sub-Benchmark | Construct | Items | Weight | SDK Mode | Novelty |
+| Sub-Benchmark | Construct | Items per model | Weight | SDK Mode | Novelty |
 |---|---|---|---|---|---|
-| 1. Learning Curves + Strategy Profiles | Sample efficiency + learning strategy | 855 | 30% | Single-prompt | **High** (strategy decomposition + micro-grammar validation) |
-| 2. Corrective Feedback | Error-driven learning (5 conditions, 2×2 factorial) | 2,220 | 70% | Multi-turn conversation | **Very High** |
-| **TOTAL** | | **3,075** | 100% | | |
-| Cross-Benchmark Analysis | Cognitive profiling (RII × FLR) | 0 (derived) | N/A | Analysis only | **Very High** |
+| 1. Learning Curves + Strategy Profiles | Sample efficiency + learning strategy | 855 (+ SB1 N=16, N=32 for key models) | 30% | Single-prompt | **High** (strategy decomposition + micro-grammar validation) |
+| 2. Corrective Feedback — Core 2×2 | Error-driven learning (4 core conditions) | 1,200 | 70% | Multi-turn conversation | **Very High** |
+| 2b. Corrective Feedback — Extended | Explanation + Misleading | 480 (top 3-4 models) | (included in 70%) | Multi-turn conversation | High |
+| 2c. Mechanistic Probes | Clean-context, prompted, structured, reformatted | 144-240 (2-3 models, pilot) | (not scored) | Mixed | **Very High** |
+| **TOTAL per model** | | **~1,200-2,535** | 100% | | |
+| Cross-Benchmark Analysis | Cognitive profiling (RII × FLR) + model grouping tests | 0 (derived) | N/A | Analysis only | **Very High** |
 
-*v10.0: SB1 right-sized to 855 items (7 micro-grammars instead of 15). SB2 unchanged at 2,220 exchanges. Net: 3,075 items.*
+*v11.0: Added no-feedback as 4th core condition. Extended to 12 turns. Added 4 mechanistic probe conditions. SB1 extended with N=16/N=32 for key models. Total items vary by model tier (core models get full battery, broad-scan models get SB1 only).*
 
-**Budget math (v10.2 — $0 human baselines):**
-- 3,075 items × 4 models × ~$0.03 = ~$369
+**Budget math (v11.0 — expanded model count):**
+- Kaggle SDK (4 models): ~3,075 items × 4 models × ~$0.03 = ~$369
 - Structured output overhead (schema in prompt): ~$20 extra
 - Zero-shot contamination check: ~$2
 - **Total Kaggle SDK: ~$391**
+- OpenRouter broad scan (15-20 models, SB1 only): ~$2-5
+- OpenRouter SB2 pilot (8-10 models, 3 instances): ~$10-20
+- OpenRouter SB2 production (6-8 models, 25 instances): ~$50-100
+- **Total OpenRouter: ~$60-125**
 - Human baselines: **$0** (informal participants, GitHub Pages hosting)
-- **Total project: ~$391**
-- Kaggle quota: $50/day, $500/month = $500+ available even without top-up
-- **~$109 breathing room** for unexpected costs (extra API calls, debugging reruns, etc.)
+- Local models: **$0** (5 configurations on M4 Pro)
+- **Total project: ~$450-520**
 
 **Resolution (tiered, execute in order):**
 1. **Day 1: Request quota increase.** Email kaggle-benchmarks-agi-hackathon@google.com. Request $300 top-up (cite multi-model, multi-condition factorial design). Still do this — extra buffer.
-2. **If no top-up: No problem.** $391 fits within $500/month base quota.
-3. **If tight: Drop micro-grammar probe** (saves $13) then trim SB1 to 2 tiers. SB2 is never cut.
-4. **Sequence: SB2 on all models first** (it's the headline). Then SB1 with remaining quota.
-5. **Local models carry zero quota cost** — run all 5 local configurations regardless.
+2. **If no top-up: No problem.** $391 fits within $500/month base quota. OpenRouter budget is separate.
+3. **If tight on OpenRouter: Reduce production model count** from 8 to 5. Core hypotheses (code-tuning, reasoning-RL) get priority.
+4. **Sequence: OpenRouter broad scan first** (cheapest, maps landscape). Then SB2 on filtered models. Kaggle SDK models last.
+5. **Local models carry zero cost** — run all 5 local configurations regardless.
+6. **If tight overall: Drop micro-grammar probe** (saves $13) then trim SB1 to 2 tiers. SB2 is never cut.
 
 ### Composite Score
 
@@ -767,7 +878,7 @@ Respond with the output symbol sequence only."""
     gave_partial = (answer == partial_rule_answer.strip()) if partial_rule_answer else False
     return {"correct": correct, "item_type": item_type, "gave_partial": gave_partial}
 
-# Sub-benchmark 2: Corrective Feedback (5 conditions, 2×2 factorial)
+# Sub-benchmark 2: Corrective Feedback (10 conditions: 4 core + 2 extended + 4 mechanistic)
 # Mechanical prompt style (v9.0+ — not conversational)
 @kbench.task(name="alp_corrective_feedback")
 def corrective_feedback(llm, examples_text, test_sequence, tier, condition,
@@ -786,6 +897,8 @@ You will be tested on new inputs. After each response, you will receive feedback
         if condition == "correction":
             feedback = f"Correct! The output is {correct_out}." if is_correct \
                 else f"Incorrect. The correct output is {correct_out}."
+        elif condition == "no_feedback":
+            feedback = "Next question."
         elif condition == "explanation":
             feedback = f"Correct! The output is {correct_out}." if is_correct \
                 else (f"Incorrect. The correct output is {correct_out}. "
@@ -794,6 +907,18 @@ You will be tested on new inputs. After each response, you will receive feedback
             feedback = f"The output for {inp} is {correct_out}. Next question."
         elif condition == "error_only":
             feedback = "Correct!" if is_correct else "Incorrect."
+        elif condition == "prompted_correction":
+            if is_correct:
+                feedback = f"Correct! The output is {correct_out}."
+            else:
+                feedback = (f"Incorrect. The correct output is {correct_out}. "
+                           f"Before answering the next question, briefly state what "
+                           f"pattern you think explains why your previous answer was wrong.")
+        elif condition == "structured_correction":
+            if is_correct:
+                feedback = f"TEST PASSED\nInput: {inp}\nExpected: {correct_out}\nYour output: {answer}\nResult: PASS"
+            else:
+                feedback = f"TEST FAILED\nInput: {inp}\nExpected: {correct_out}\nYour output: {answer}\nResult: FAIL"
         elif condition == "misleading":
             if i in misleading_rounds:
                 feedback = f"Incorrect. The correct output is {partial_rule_outputs[i]}."
@@ -816,29 +941,83 @@ for task in [learning_curve_item, corrective_feedback]:
 
 ## MODELS TO TEST
 
-### Strategic Principle
-Maximize *architecture diversity × reasoning-mode diversity × cost efficiency*. The M4 Pro (48GB unified) runs 4-5 local models at ZERO quota cost, effectively doubling the model count. 9 total configurations provide massive discriminatory power.
+### Strategic Principle (v11.0 — hypothesis-driven selection)
+
+Each model tests a **specific hypothesis** about what drives in-context learning and feedback sensitivity. Two-phase approach: broad scan → filtered deep dive. Total: 15-20 model configurations across Kaggle SDK, OpenRouter, and local inference.
+
+### Hypothesis-Driven Selection Framework
+
+**Hypothesis 1: Scale matters (within-family comparisons)**
+- Llama 3.1 8B vs 70B (same family, 9x scale difference)
+- GPT-4o-mini vs GPT-4o
+- Claude Haiku vs Sonnet
+
+**Hypothesis 2: Code training enables error signal processing**
+- DeepSeek-Coder-V2 vs DeepSeek-V3 (code-tuned vs general)
+- Codestral vs Mistral Large
+- This is the most exciting hypothesis. Code models see millions of error→fix sequences in training. If they show FLR > 0 while chat models show FLR ≈ 0: **"Error-signal sensitivity is not an architectural limitation — it's a training data gap."**
+
+**Hypothesis 3: Reasoning training (RL) changes feedback processing**
+- DeepSeek-R1 vs DeepSeek-V3 (reasoning RL vs base)
+- o1-mini vs GPT-4o-mini (reasoning-tuned vs standard)
+- QwQ-32B vs Qwen3-32B (if distinct enough)
+- RL-trained reasoning models are optimized to evaluate their own outputs. If they show better feedback sensitivity, RLHF/RLVR partially teaches error processing.
+
+**Hypothesis 4: Architecture differences**
+- Gemma 3 27B (Google open) vs Gemini Flash (Google closed) — same company, open vs closed
+- Any available Mamba/hybrid model vs standard transformer at similar scale
+- Qwen3.5-35B-A3B MoE vs Qwen3-32B dense — sparse vs dense at similar total params
+
+### Two-Phase Model Selection Protocol
+
+**Phase 1 — Broad scan (SB1 only, all models):**
+Run 30 SB1 items (T1 N=8 + T2 N=8) on ALL 15-20 candidate models via Kaggle SDK + OpenRouter. Cost: ~$2-5 total. Time: a few hours. This maps the landscape.
+
+**Phase 1 filter:** Keep only models with T2 N=8 accuracy between 15% and 70% (floor/ceiling exclusion).
+
+**Phase 2 — Deep dive (SB2 pilot on filtered models):**
+Run SB2 pilot (3 instances, correction + practice-only + no-feedback) on the 8-10 models that pass the filter.
+
+**Phase 3 — Production (full SB2 on informative models):**
+Run full 25-instance SB2 (4 core conditions) on the 6-8 most informative models.
 
 ### Kaggle SDK Models (use quota — $50/day, $500/month)
 
-| Model | SDK String | Cost Tier | Why Include |
-|-------|-----------|-----------|-------------|
-| **Gemini 3 Flash** | google/gemini-3-flash | Low | Flagship Flash — fast baseline, Kaggle-native. Judges work at Google; this model matters. |
-| **Gemini 3.1 Pro** | google/gemini-3.1-pro-preview | Medium | Top-tier reasoning with dynamic thinking levels. Compare Flash vs Pro within same family. |
-| **Claude Sonnet 4** | anthropic/claude-sonnet-4 | Medium | Different architecture family. Strong instruction-following reputation. |
-| **Llama 3.1 70B** | meta/llama-3.1-70b | Medium | Open-weight on Kaggle. Bridges to local open-source story. |
+| Model | SDK String | Cost Tier | Hypothesis |
+|-------|-----------|-----------|------------|
+| **Gemini 3 Flash** | google/gemini-3-flash | Low | Baseline. Judges work at Google. |
+| **Gemini 3.1 Pro** | google/gemini-3.1-pro-preview | Medium | Scale (Flash vs Pro, same family) |
+| **Claude Sonnet 4** | anthropic/claude-sonnet-4 | Medium | Architecture family diversity |
+| **Llama 3.1 70B** | meta/llama-3.1-70b | Medium | Open-weight bridge + scale anchor |
+
+### OpenRouter Models (v11.0 — ~$50-100 for production runs)
+
+| Model | Hypothesis | Why |
+|-------|-----------|-----|
+| **DeepSeek-V3** | Code training baseline | General model, not code-tuned |
+| **DeepSeek-Coder-V2** | Code training (H2) | Same family, code-tuned — if FLR differs, it's training data |
+| **DeepSeek-R1** | Reasoning RL (H3) | Same family, reasoning-tuned — if FLR differs, it's RL training |
+| **GPT-4o-mini** | Scale baseline (H1) | Small OpenAI model |
+| **GPT-4o** | Scale (H1) | Same family, larger — scale effect on feedback |
+| **o1-mini** | Reasoning RL (H3) | Same family as GPT-4o-mini, reasoning-tuned |
+| **Codestral** | Code training (H2) | Mistral's code model |
+| **Mistral Large** | Code training baseline | Same company, general model |
 
 ### Local Models (FREE — run on M4 Pro via llama.cpp native)
 
-| Model | Quant / Size | RAM @ 8K | Why Include |
-|-------|-------------|----------|-------------|
-| **Qwen3-32B (thinking)** | Q4_K_M ~18GB | ~22GB | Best open dense model at this size. Thinking traces provide qualitative strategy data. |
-| **Qwen3-32B (no-think)** | Same weights | ~22GB | Same model, thinking disabled via `/no_think`. Tests whether explicit CoT changes learning strategy or feedback integration. Effectively a 5th local "model" for free. |
-| **Qwen3.5-35B-A3B** | Q4_K_XL ~20GB | ~12GB active | MoE — only 3B params active per token. Radically different architecture. Blazing fast (~60-80 tok/s). Tests whether sparse activation changes learning. |
-| **Gemma 3 27B** | Q4_K_M ~15GB | ~19GB | Google's open model. Direct comparison with closed Gemini on Kaggle SDK — same company, open vs closed. Judges will find this comparison fascinating. |
-| **Phi-4 14B** | Q5_K_M ~10GB | ~14GB | Microsoft's small reasoning-heavy model. 80.4% on MATH. Tests scale effects — does a smaller model learn *differently*, not just worse? |
+| Model | Quant / Size | RAM @ 8K | Hypothesis |
+|-------|-------------|----------|------------|
+| **Qwen3-32B (thinking)** | Q4_K_M ~18GB | ~22GB | Reasoning mode (H3). Thinking traces provide qualitative data. |
+| **Qwen3-32B (no-think)** | Same weights | ~22GB | Same model, thinking disabled. Tests whether CoT changes feedback integration. |
+| **Qwen3.5-35B-A3B** | Q4_K_XL ~20GB | ~12GB active | Architecture (H4): MoE sparse vs dense |
+| **Gemma 3 27B** | Q4_K_M ~15GB | ~19GB | Architecture (H4): Google open vs closed (Gemini) |
+| **Phi-4 14B** | Q5_K_M ~10GB | ~14GB | Scale (H1): smallest model — does a smaller model learn *differently*, not just worse? |
 
-**Total: 9 configurations (4 Kaggle SDK + 4 local models + 1 mode variant)**
+**Total: 17+ configurations (4 Kaggle SDK + 8 OpenRouter + 4 local + 1 mode variant)**
+
+### Per-Model Documentation
+
+For each model, record in a table: Name, parameter count, active params (if MoE), architecture type, training method (base/SFT/RLHF/RLVR/code), context length, and which hypothesis it tests. This table goes in the writeup to show judges the selection was scientifically motivated.
 
 ### Local Model Integration
 
@@ -884,14 +1063,15 @@ Comparing quantized local models (Q4_K_M, Q5_K_M) with full-precision API models
 2. **Quantization effects:** Q4_K_M preserves ~99% of full-precision accuracy on standard benchmarks. We note quantization as a caveat, not a confound.
 3. **The comparison IS the point:** The question isn't "which is more accurate?" (SB1 handles that). The question is "do different architectures and scales produce different *learning strategies* and *feedback responses*?" A model's cognitive profile — rule-inducer vs. memorizer, feedback-learner vs. feedback-blind — is robust to minor accuracy differences from quantization.
 4. **Internal consistency:** Each local model serves as its own baseline across conditions. FLR measures within-model change over turns. **All cognitive profile metrics (FLR, RII, HTR, EB, EOLR, MR) are within-model contrasts, robust to absolute accuracy differences from quantization or scale.**
+5. **Within-family comparisons are cleanest:** The hypothesis-driven selection (v11.0) prioritizes within-family comparisons (DeepSeek-V3 vs DeepSeek-Coder-V2, GPT-4o-mini vs o1-mini) where the only variable is training method, not architecture or scale.
 
-### Scheduling
+### Scheduling (v11.0 — compressed timeline)
 
-- **Week 1-2:** Run all local models first (free). Use for iteration, debugging, piloting.
-- **Week 3:** Run Kaggle SDK models (quota). This is the only heavy-spend week.
-- **Qwen3.5-35B-A3B first** (fastest, ~60-80 tok/s) for rapid iteration.
-- **Qwen3-32B-think overnight** (slowest but most interesting data).
-- **Gemma 3 27B** last for the Google-vs-Google comparison story.
+- **Days 2-3:** Run no-feedback + clean-context pilots (Flash). Run OpenRouter broad scan (all 15-20 models, SB1 only). Build analysis module.
+- **Days 4-5:** Select models from broad scan. Run SB2 pilot on selected models. Run mechanistic probes on Flash.
+- **Days 6-10:** Production SB2 runs on 6-8 models. Local models + OpenRouter in parallel.
+- **Days 11-14:** Kaggle SDK models (quota). Full analysis.
+- **Days 15-28:** Polish, writeup, submission.
 
 ---
 
@@ -903,22 +1083,31 @@ Comparing quantized local models (Q4_K_M, Q5_K_M) with full-precision API models
 
 With 20 people and $0, the human data serves as a **directional reference baseline**, not a powered inferential study. This is more honest and more practical than an underpowered Prolific study pretending to be rigorous. The human trajectory line on the Gap Chart — clearly rising while model lines stay flat — is worth more than any p-value.
 
-### Design: All-Correction, Within-Subjects Optional
+### Design: Correction + Clean-Context Within-Subjects (v11.0)
 
 - **Primary:** All 20 participants do the **Correction condition** on 1 STS instance (12 rounds, ~15 minutes)
 - 10 participants get STS Instance A, 10 get Instance B (counterbalanced to check rule-set dependence)
-- **Optional within-subjects bonus:** If time allows, each person does a *second* STS instance under **Practice-only** (no evaluation, just "the answer was X"). This gives 20 paired observations — roughly equivalent power to 40 between-subjects. Order effects noted as caveat.
+- **Within-subjects clean-context condition (v11.0):** Each person does a *second* STS instance under **Clean-context** (no evaluation shown — just accumulating examples without showing the human's wrong answer back to them). This gives 20 paired observations for the context pollution question.
 
-**Why all 20 do Correction (not split across conditions):** With only 20 people, splitting 10-vs-10 between-subjects wastes power. The key comparison is **human correction trajectory vs. model correction trajectory** — that's the Gap Chart. Model data already provides practice-only baselines across 9 configurations. Decades of cognitive science establishes that humans use error signals (Hattie & Timperley 2007) — we don't need to re-prove that.
+**Why correction + clean-context (not correction + practice-only):** The v11.0 plan adds the context pollution hypothesis as a major mechanistic probe. By running the SAME conditions on humans:
+- If humans are unaffected by seeing their own wrong answers but models are degraded: human-vs-AI difference in filtering ability (novel finding).
+- If humans are ALSO degraded: context pollution is a universal cognitive effect, not model-specific.
+- This strengthens the Gap Chart narrative with a mechanistic dimension.
+
+**Why all 20 do Correction (not split across conditions):** With only 20 people, splitting 10-vs-10 between-subjects wastes power. The key comparison is **human correction trajectory vs. model correction trajectory** — that's the Gap Chart. Model data provides practice-only baselines across 15+ configurations. Decades of cognitive science establishes that humans use error signals (Hattie & Timperley 2007) — we don't need to re-prove that.
 
 ### The Web Tool (Day 1 build, ~2 hours)
 
-Single HTML/JS file hosted on GitHub Pages:
-1. Show training examples (static, same STS instances as model evaluation)
-2. Present test input, text box for answer
-3. On submit: compare to correct answer, show "Correct!" or "Incorrect. The correct output was ⟐◈⬡"
-4. Next question → repeat for 12 rounds
-5. Generate results summary at end that participants copy-paste and send (or log to Google Sheets via Apps Script)
+Single HTML/JS file hosted on GitHub Pages. Accepts any STS instance definition as a **JSON config** so it can be reused across different instances and conditions:
+1. Load STS config (training examples, test sequence, condition type) from JSON
+2. Show training examples (static, same STS instances as model evaluation)
+3. Present test input, text box for answer
+4. On submit: compare to correct answer, show condition-appropriate feedback:
+   - Correction: "Correct!" or "Incorrect. The correct output was ⟐◈⬡"
+   - Clean-context: Just shows the correct pair as a new example, no evaluation
+5. Next question → repeat for 12 rounds
+6. Log per-turn responses and timestamps
+7. Generate results summary at end that participants copy-paste and send (or log to Google Sheets via Apps Script)
 
 Uses the same STS instances as the model evaluation — built alongside the STS generator on Day 1.
 
@@ -987,7 +1176,7 @@ For each model, two side-by-side bars: evaluation effect and answer effect. Show
 
 ### 3. Cognitive Profile Radar (Cross-benchmark — THE SYNTHESIS)
 
-5-axis radar/spider chart. Each model as a colored polygon. Human as dashed polygon. All 9 models in one frame.
+5-axis radar/spider chart. Each model as a colored polygon. Human as dashed polygon. Top 8-10 models in one frame (full set in notebook appendix).
 
 ```
                     Sample Efficiency
@@ -1005,7 +1194,7 @@ For each model, two side-by-side bars: evaluation effect and answer effect. Show
     (axes: AULC, RII, 1-HTR, FLR, MR)
 ```
 
-### 4. Feedback Trajectory Plot (SB2 — 5 conditions, supporting detail)
+### 4. Feedback Trajectory Plot (SB2 — all conditions, supporting detail)
 
 Accuracy by turn for each condition, one panel per model. Goes in the notebook.
 
@@ -1016,10 +1205,11 @@ Accuracy                        Claude Sonnet 4
       |                __--/.----- Correction
   0.5 |          ___--/.../------- Practice-only
       |     __--/../...../-------- Error-only
-      |  _--/../...../   .------- Misleading
+      |  _--/../...../   .------- No-feedback
   0.0 |________________________________
       1  2  3  4  5  6  7  8  9 10 11 12
                 Turn number
+         ---- SB1 single-prompt baseline (dashed reference line)
 ```
 
 ### 5. Learning Curves Plot (SB1 — supporting context, notebook only)
@@ -1039,17 +1229,37 @@ Accuracy                    Tier 3
                 N examples
 ```
 
-**Visualization hierarchy for the writeup:** Lead with the Gap Chart (cover image, headline). Follow with the 2×2 Decomposition (the mechanism). Radar chart in the writeup for synthesis. Trajectory and learning curves go in the notebook as supporting evidence.
+### 6. Model Grouping Comparison (v11.0 — THE TRAINING DATA STORY)
+
+Box plots of FLR grouped by training type: code-tuned vs. chat-tuned, reasoning-RL vs. base. Permutation test p-values annotated. If code-tuned models show systematically higher FLR, this is visually immediate.
+
+```
+FLR by Training Type
+                Code-tuned    Chat-tuned    Reasoning-RL    Base
+  +0.10  |         ┬              ┬               ┬            ┬
+         |         │              │               │            │
+  +0.05  |      ┌──┤           ┌──┤            ┌──┤         ┌──┤
+         |      │  │           │  │            │  │         │  │
+   0.00  |    ──┤  │         ──┤  │          ──┤  │       ──┤  │
+         |      │  │           │  │            │  │         │  │
+  -0.05  |      └──┤           └──┤            └──┤         └──┤
+         |         ┴              ┴               ┴            ┴
+```
+
+**Visualization hierarchy for the writeup:** Lead with the Gap Chart (cover image, headline). Follow with the 2×2 Decomposition (the mechanism). Model Grouping for the training data story. Radar chart in the writeup for synthesis. Trajectory and learning curves go in the notebook as supporting evidence.
 
 ---
 
 ## THE MONEY SENTENCE
 
 **If FLR > 0 for some models (gradient):**
-> "ALP reveals that frontier models cannot learn from being told they're wrong. A 2×2 factorial design — the first controlled decomposition of corrective feedback in in-context learning — isolates the evaluation signal from answer exposure and shows that models benefit from seeing correct examples but are nearly blind to error signals. The resulting cognitive profiles across 9 model configurations paint the most detailed picture to date of where current AI falls short of adaptive intelligence."
+> "ALP reveals that frontier models cannot learn from being told they're wrong. A 2×2 factorial design — the first controlled decomposition of corrective feedback in in-context learning — isolates the evaluation signal from answer exposure and shows that models benefit from seeing correct examples but are nearly blind to error signals. The resulting cognitive profiles across 15+ model configurations paint the most detailed picture to date of where current AI falls short of adaptive intelligence."
 
 **If FLR ≈ 0 for ALL models (universal blindness — v10.1 first-class narrative):**
-> "Frontier Models Cannot Learn from Their Mistakes: Evidence from 9 LLMs on Contamination-Proof Tasks. A 2×2 factorial decomposition of corrective feedback reveals that no tested model — across 4 architecture families, 5 scale points, and both thinking and non-thinking modes — shows meaningful learning from error signals. Models process corrections as additional examples, not as error-driven updates. The feedback blindness is universal, not graded."
+> "Frontier Models Cannot Learn from Their Mistakes: Evidence from 15+ LLMs on Contamination-Proof Tasks. A 2×2 factorial decomposition of corrective feedback reveals that no tested model — across 6 architecture families, multiple scale points, code-tuned and reasoning-tuned variants — shows meaningful learning from error signals. Models process corrections as additional examples, not as error-driven updates. The feedback blindness is universal, not graded."
+
+**If code-tuned models show FLR > 0 but chat models don't (v11.0 — the training data hypothesis):**
+> "Error-signal sensitivity is not an architectural limitation — it's a training data gap. Code-trained models, exposed to millions of error→fix sequences during training, show measurable feedback learning on contamination-proof symbolic tasks where chat-trained models show none. This has direct implications for agentic AI: feedback-sensitive systems may need code-style error formatting, not conversational corrections."
 
 **Why the null is arguably stronger than the gradient:** A finding of "some models learn a little" invites quibbles about effect sizes and sample noise. "No model learns from corrections, period" is a clean, headline-ready negative result with immediate implications for anyone building interactive AI systems. The 2×2 decomposition makes the null *causal* — it's not just "corrections don't help," it's "the error signal component adds zero beyond additional-example exposure." Prepare this narrative from Day 1, not as risk mitigation.
 
@@ -1057,7 +1267,7 @@ Accuracy                    Tier 3
 
 ## PRE-REGISTERED HYPOTHESES
 
-Written before running the full benchmark. Included in the Kaggle notebook for credibility. **Each hypothesis includes null-result interpretation — both outcomes are informative. v10.0: Trimmed from 18 to 13, cutting obvious or low-stakes hypotheses to sharpen the story.**
+Written before running the full benchmark. Included in the Kaggle notebook for credibility. **Each hypothesis includes null-result interpretation — both outcomes are informative. v11.0: Expanded from 13 to 18, adding mechanistic probes (H14-H18) motivated by pilot data showing SB2 < SB1 gap.**
 
 **SB1 — Learning Curves & Strategy:**
 1. N50 varies across models (discriminatory power). Prediction: Claude Sonnet 4 ≤ Gemini Pro < Gemini Flash < Llama 70B.
@@ -1096,11 +1306,69 @@ Written before running the full benchmark. Included in the Kaggle notebook for c
     - *Clustering: Suggests a general "learning quality" factor.*
     - *Dissociation: "Learning quality" is multi-dimensional — you need BOTH strategy profiling AND feedback testing to characterize a model. The more interesting finding.*
 
+**v11.0 — New Hypotheses (Mechanistic Probes + Model Selection):**
+14. Clean-context > correction for all models (context pollution hypothesis). The model's own wrong answers in conversation history poison pattern induction.
+    - *Null: Clean-context ≈ correction → context pollution isn't the issue. The model genuinely hits a ceiling regardless of how information is presented.*
+15. Code-tuned models (DeepSeek-Coder-V2, Codestral) show higher FLR than their chat-tuned counterparts (DeepSeek-V3, Mistral Large). Code training teaches error-signal processing through millions of error→fix sequences.
+    - *Null: Code-tuned ≈ chat-tuned on FLR → feedback blindness is architecture/scale-independent, not a training data gap. This would strengthen the "universal blindness" narrative.*
+16. Reasoning-tuned models (DeepSeek-R1, o1-mini) show higher FLR than base models (DeepSeek-V3, GPT-4o-mini). RL training partially teaches error processing.
+    - *Null: Reasoning-tuned ≈ base on FLR → RL training doesn't transfer to in-context error-signal processing.*
+17. Structured-correction ≈ correction (format is not the issue) OR structured-correction > correction (format sensitivity). Tests whether models have learned to process error signals in code-like formats but not conversational ones.
+    - *Either direction is informative. If format matters → direct implications for agentic feedback system design.*
+18. No-feedback < all other conditions (information from feedback IS used, just not differentially by type). The multi-turn format itself may hurt via context pollution from wrong answers.
+    - *Null: No-feedback ≈ correction → feedback adds nothing beyond the multi-turn format. The strongest possible null.*
+
 **Thinking Mode:**
 13. Qwen3-32B-think shows higher RII than Qwen3-32B-no-think (explicit reasoning traces help rule induction). If not, thinking is decorative for in-context learning.
     - *Null: No RII difference → explicit chain-of-thought doesn't improve rule induction. Challenges the "thinking helps learning" assumption.*
 
 **If predictions are wrong:** That's fine — pre-registration is about transparency, not accuracy. Wrong predictions are reported honestly. A finding like "all models show FLR ~ 0" is the most interesting null result. **ALP is designed to be valuable regardless of direction — both outcomes for every hypothesis generate publishable insights.**
+
+---
+
+## STATISTICAL ANALYSIS INFRASTRUCTURE (v11.0 — Build Once, Use Throughout)
+
+Build a single Python analysis module that all experiments pipe results through. Takes a standardized results JSONL and produces all outputs. Every time a new model is run, feed its results in and get updated figures.
+
+### Logging Standard
+
+For every turn of every condition of every model, save to JSONL: complete prompt sent, complete raw response, extracted answer, correct answer, match boolean, timestamp, model name, condition name, instance ID, turn number. One JSONL file per model. This is the audit trail and analysis input.
+
+### Per-Condition Metrics
+- Accuracy per turn with 95% bootstrap CIs (resample instances, not turns — instances are the independent unit)
+- Slope of accuracy across turns (linear regression) with CI on the slope
+- Cohen's d for each pairwise condition comparison (correction vs practice-only, etc.)
+
+### The 2×2 Decomposition (v11.0 — proper marginal averaging)
+- Answer effect = mean(practice-only, correction) − mean(no-feedback, error-only), with bootstrap CI
+- Evaluation effect = mean(error-only, correction) − mean(no-feedback, practice-only), with bootstrap CI
+- Interaction term = Correction − Practice-only − Error-only + No-feedback
+
+### Per-Model Profile
+- AULC from SB1 (area under learning curve, normalized)
+- RII (Type E accuracy / Type R accuracy) with CI
+- FLR (correction slope minus practice-only slope) with CI
+- All metrics on same scale for radar chart
+
+### Cross-Model Analysis
+- Rank-order correlations (Spearman) between SB1 metrics and SB2 metrics across models
+- Permutation test for whether model groupings (code vs chat, reasoning vs standard) differ on FLR
+- Mixed-effects model: accuracy ~ turn × condition × model_group + (1|instance) for the full dataset
+
+### Visualization Pipeline
+1. **Gap chart** (the headline viz — FLR per model, sorted, with CIs)
+2. **2×2 decomposition chart** (answer effect vs evaluation effect per model)
+3. **Per-turn trajectory plot** (all conditions, one panel per model)
+4. **Learning curve plot** (SB1, accuracy vs N, per model)
+5. **Radar chart** (5 axes per model)
+6. **Model grouping comparison** (code-tuned vs chat, reasoning vs base — box plots of FLR by group)
+
+### SB1 Extended Data Points (v11.0)
+
+Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS instances from the original SB1 pilot). This provides the comparison point needed to interpret the SB2 < SB1 gap:
+- If SB1 T2 N=16 ≈ SB2 correction at Turn 8 (~38%): the model follows its learning curve and feedback adds nothing beyond "more examples."
+- If SB1 T2 N=16 >> SB2 correction at Turn 8: multi-turn format actively hurts beyond just the learning curve.
+- The clean-context condition at Turn 8 is functionally equivalent to SB1 at N=16 — this validates the comparison.
 
 ---
 
@@ -1112,9 +1380,9 @@ Written before running the full benchmark. Included in the Kaggle notebook for c
 | Strategy profiles show no signal (Type E/L same as Type R) | Medium | **Low** | Supporting context — if it fails, nothing is lost. Same items, same API calls. Drop strategy analysis from writeup, focus on feedback findings. |
 | RII and HTR correlate (2D collapses to 1D) | High | Low | Report correlation explicitly. Show as ranked dot plot instead of scatter. 1D ranking is still novel and valuable. |
 | Multi-turn SDK bugs | Low-Med | **Medium** | Single-prompt-with-history fallback built from Day 1. Pilot both in Week 1. Pick the reliable one. |
-| All models show strong feedback learning | Low | Medium | Great — discriminatory power from degree + condition effects (5 conditions provide rich gradient). 2×2 decomposition becomes even more interesting. |
+| All models show strong feedback learning | Low | Medium | Great — discriminatory power from degree + condition effects (10 conditions provide rich gradient). 2×2 decomposition + mechanistic probes become even more interesting. |
 | EB < 0 (explanation hurts) | Medium | **Positive** | Replicates Alazraki et al. 2025 on novel substrates. Pre-registered as two-sided. Becomes a secondary finding. |
-| A competitor builds similar eval | Low-Med | Medium | Moat: 2×2 factorial + 5 conditions + strategy decomposition + 9 models + cross-benchmark cognitive profiling + human baselines (informal but present) + pre-registration + DeepMind framework alignment + literature differentiation (LLF-Bench, FB-Bench, Self-Correction Bench, Likra). Hard to replicate this depth. |
+| A competitor builds similar eval | Low-Med | Medium | Moat: 2×2 factorial + 10 conditions + strategy decomposition + 15+ models (hypothesis-driven) + mechanistic probes + cross-benchmark cognitive profiling + human baselines (informal but present) + pre-registration + DeepMind framework alignment + literature differentiation (LLF-Bench, FB-Bench, Self-Correction Bench, Likra). Hard to replicate this depth. |
 | API quota insufficient | Low | Low | Budget is ~$391 total (no Prolific spend), within $500/month base quota. ~$109 breathing room. |
 | Writeup exceeds 1,500 words | Medium | Moderate | Budget: 1,220 words allocated, 280-word buffer. Results-first drafting. |
 | Structured output unavailable on SDK | Low | **Medium** | Day 1 test: 10 prompts with `schema=STSAnswer`. If fails → Tier 3 regex with 50-prompt gate (v8.0 fallback). Structured output is an optimization, not a dependency. |
@@ -1122,6 +1390,9 @@ Written before running the full benchmark. Included in the Kaggle notebook for c
 | Type E items not generated for some (STS, N) cells | Low | Low | STS generator constrained for ≥1 non-DIRECT rule + nested training sets → target >90% feasibility. Report fraction of valid cells. |
 | Local model quantization skews comparison | Low | **Low** | Transparently noted as caveat. Within-model contrasts (FLR, RII, EB, EOLR, MR) unaffected by quantization. |
 | Error-only condition shows zero signal | High | Low | Expected outcome — pure error signals are weak. The 2×2 factorial interpretation still holds: it shows the answer component dominates. This IS the finding. |
+| Context pollution confirmed (clean-context >> correction) | Medium | **Positive** | Explains the SB2 < SB1 gap. Finding: "Models cannot distinguish correct from incorrect information in their own conversation history." Direct implications for agentic system design. |
+| Code-tuned models show no FLR advantage | Medium | Low | Strengthens "universal blindness" narrative. Training data doesn't help. |
+| OpenRouter rate limits or outages | Medium | Medium | Build rate-limiting client with exponential backoff. Spread calls across multiple hours. Have fallback models if primary choices are unavailable. |
 | SB2 primary tier miscalibrated | Medium | **High** | SB1 pilot calibrates tier selection. If ~40% zone doesn't exist at any tier, widen to ~25-55% range. Secondary tier provides backup. |
 | Human FLR ≈ 0 on STS (alien task problem) | Medium | **High** | Week 1 pilot (3-5 people via web tool). If humans can't learn STS either → pivot to micro-grammar for remaining 15-17 participants. Pre-registered either way. |
 | Tokenization confound across models | Low-Med | **Low** | Pre-screen symbols for tokenization consistency on accessible tokenizers. Note as limitation for closed models. Within-model contrasts unaffected. |
@@ -1133,17 +1404,19 @@ Written before running the full benchmark. Included in the Kaggle notebook for c
 
 | Section | Words | Content |
 |---|---|---|
-| Title + subtitle | 20 | "Can AI Models Learn from Their Mistakes? A 2×2 Factorial Decomposition of Error-Driven Learning across 9 Frontier LLMs" |
+| Title + subtitle | 20 | "Can AI Models Learn from Their Mistakes? A 2×2 Factorial Decomposition of Error-Driven Learning across 15+ LLMs" |
 | Problem + What's New | 200 | Current evals tell you *how well* models learn — not *whether they can learn from being wrong*. Recent work tests feedback in various forms (LLF-Bench, MINT, FB-Bench, Alazraki et al.) but none apply controlled factorial decomposition on contamination-proof substrates. ALP fills this gap. Map to Morris et al. 2024 cognitive framework. The 2×2 IS the contribution — explain it clearly here. |
-| Methods | 250 | STS design + contamination defense. 5 conditions, 2×2 factorial table. Key metrics (FLR, EB, EOLR, MR). SB1 briefly: learning curves + strategy decomposition as supporting context. 9 model configurations. Structured output extraction. Human baselines: 20 informal participants, correction condition, descriptive comparison. |
-| Results & Insights | 650 | **Lead with the Gap Chart** (headline: humans learn from corrections, models don't). **The 2×2 Decomposition** (evaluation effect vs. answer effect — THE novel finding). EB direction (Alazraki replication?). Per-model highlights. Cognitive Profile Radar. Strategy profiles (brief). Thinking mode comparison (Qwen3). Pre-registered predictions vs. actuals. |
+| Methods | 250 | STS design + contamination defense. 10 conditions (4 core + 2 extended + 4 mechanistic probes), 2×2 factorial table. Key metrics (FLR, 2×2 decomposition, EB, EOLR, MR). SB1 briefly: learning curves + strategy decomposition as supporting context. 15+ model configurations (hypothesis-driven: scale, code-tuning, reasoning-RL). Structured output extraction. Human baselines: 20 informal participants, correction + clean-context, descriptive comparison. |
+| Results & Insights | 650 | **Lead with the Gap Chart** (headline: humans learn from corrections, models don't). **The 2×2 Decomposition** (evaluation effect vs. answer effect — proper marginal averaging with no-feedback baseline). **The SB2 < SB1 finding** (context pollution from wrong answers — clean-context probe). **Code-training hypothesis** (do code-tuned models show higher FLR?). EB direction (Alazraki replication?). Per-model highlights by hypothesis group. Cognitive Profile Radar. Strategy profiles (brief). Pre-registered predictions vs. actuals (18 hypotheses). |
 | Affiliations | 25 | Independent researcher / Hollis Health LLC |
-| References | 75 | ~19 citations: Morris et al. 2024 (DeepMind cognitive framework), Rescorla & Wagner 1972, Hattie & Timperley 2007, Cheng et al. 2023 (LLF-Bench), Li et al. 2025 (FB-Bench), Tsui 2025 (Self-Correction Bench), Wang et al. 2024 (MINT), Hamdan & Yuret 2025 (Likra), Alazraki et al. 2025, MIR-Bench 2025, RULEARN/IDEA (Zhu et al. 2024), Alon et al. 2024, Logan 1988, Johansen & Palmeri 2002, Olsson et al. 2022 (induction heads), von Oswald et al. 2023 (ICL as gradient descent), Berko 1958, WILT (Wang et al. 2024), iolbench |
+| References | 75 | ~19 citations: Morris et al. 2024 (DeepMind cognitive framework), Rescorla & Wagner 1972, Hattie & Timperley 2007, Cheng et al. 2023 (LLF-Bench), Li et al. 2025 (FB-Bench), Tsui 2025 (Self-Correction Bench), Wang et al. 2024 (MINT), Hamdan & Yuret 2025 (Likra), Alazraki et al. 2025, MIR-Bench 2025, RULEARN/IDEA (Zhu et al. 2024), Alon et al. 2024, Logan 1988, Johansen & Palmeri 2002, Olsson et al. 2022 (induction heads), von Oswald et al. 2023 (ICL as gradient descent), Berko 1958, WILT (Wang et al. 2024), iolbench, Liu et al. 2024 ("lost in the middle" attention) |
 | **Total** | **1,220** | *280 words buffer for data-dependent details* |
 
-**Title (gradient finding):** "Can AI Models Learn from Their Mistakes? A 2×2 Factorial Decomposition of Error-Driven Learning across 9 Frontier LLMs"
+**Title (gradient finding):** "Can AI Models Learn from Their Mistakes? A 2×2 Factorial Decomposition of Error-Driven Learning across 15+ LLMs"
 
-**Title (universal blindness finding):** "Frontier Models Cannot Learn from Their Mistakes: Evidence from 9 LLMs on Contamination-Proof Tasks"
+**Title (universal blindness finding):** "Frontier Models Cannot Learn from Their Mistakes: Evidence from 15+ LLMs on Contamination-Proof Tasks"
+
+**Title (code-training finding):** "Code-Trained Models Process Error Signals; Chat Models Don't: Evidence from Controlled Feedback Experiments on 15+ LLMs"
 
 **Drafting strategy:** Write Results section FIRST. It's the most important section and the hardest to compress. Build the rest of the writeup around the findings.
 
@@ -1151,72 +1424,86 @@ Written before running the full benchmark. Included in the Kaggle notebook for c
 
 ## IMPLEMENTATION TIMELINE
 
-| Week | Deliverables | Hours | Spend |
-|---|---|---|---|
-| **Week 1 (Mar 18-24)** | **Day 1:** Email for quota top-up. Build llama.cpp with Metal, download all 4 local models (~63GB). **Build human baseline web tool** (~2 hours — single HTML/JS file, uses same STS instances, hosted on GitHub Pages). **GATE 0: Structured output + extraction validation** — Test `llm.prompt(..., schema=STSAnswer)` on 10 sample prompts per SDK model (structured output). Test JSON mode on Qwen3.5-35B-A3B (local). If structured output works → move on. If not → fall to regex with 50-prompt gate. **Pre-screen 20 candidate Unicode symbols** on accessible tokenizers, select 12. Build STS generator + solver + partial-rule simulator (with nested training sets, Type E feasibility constraint, zero-shot contamination check). Build Type E item generator. Build micro-grammar generator (7 grammars). Implement all 5 SB2 conditions (both multi-turn and single-prompt-with-history). **SB1 pilot on local models** (free): 3 tiers × 3 N-values × 5 STS × 5 items = 225 items on Qwen3.5-35B-A3B (fastest). Validate: (a) accuracy gradient, (b) Type E ≠ Type R accuracy at Tiers 2+, (c) partial-rule answers on Type L. **Calibrate SB2 starting conditions from pilot results.** Pilot both SB2 implementations on 3 STS instances → pick one. **Minimal SB2 pilot (v10.1 — front-loaded):** Run 3 STS instances × correction vs. practice-only on Qwen3.5-35B-A3B. Early read on whether the feedback effect exists. **Run 3-5 informal human pilots** (friends/colleagues) on STS correction via web tool. **Decision gate:** If humans improve on STS → recruit remaining 15-17 on STS. If not → pivot to micro-grammar for remaining participants. | 25-30 | $0 |
-| **Week 2 (Mar 25-31)** | Run full SB1 + SB2 on 2 local models (Qwen3.5-A3B for speed + Qwen3-32B for depth) at calibrated tier. Run Qwen3-32B thinking vs no-think comparison. Compute RII, HTR, FLR, EOLR on local pilot data. Run micro-grammar probe on local models. Compute STS-micro-grammar rank-order correlation. **DISCRIMINATORY POWER CHECK:** Does the 2×2 decomposition show different patterns across models? Does FLR differ? If zero variation on ALL metrics, pivot narrative to "AI models are universally feedback-blind" (still publishable). **Human pilot decision gate:** If informal humans show FLR > 0 on STS → proceed with STS Prolific launch. If not → design micro-grammar human baselines. **Write pre-registered hypotheses.** | 20-25 | $0 |
-| **Week 3 (Apr 1-7)** | Run Kaggle SDK models (4 models, SB1 + SB2). Continue rolling human participant recruitment (target: 20 total by end of week). Run remaining local models (Gemma 3 27B, Phi-4 14B). Begin analysis and visualization. Build Gap Chart + 2×2 Decomposition Chart + Radar Chart. | 15-20 | $391 |
-| **Week 4 (Apr 8-16)** | Generate all visualizations. Compare pre-registered predictions to actuals. **If time permits:** Analyze thinking traces (keyword coding). Evaluate EB direction (Alazraki replication?). Write 1,500-word writeup (Results section FIRST, then build around). Polish Kaggle notebook. Create cover image (the Gap Chart). Submit before Apr 16 11:59 PM UTC. | 10-15 | $0 |
-| **Total** | | **70-90 hrs** | **~$391** |
+| Phase | Dates | Deliverables | Hours | Spend |
+|---|---|---|---|---|
+| **Days 2-3 (Mar 19-20)** | Pilot battery | Run **no-feedback** condition on existing 3 instances (Flash). Run **clean-context** on existing 3 instances (Flash). Run SB1 at **N=16 and N=32** on existing T2 instances (Flash). Fix Qwen3.5 temp, re-validate. Get Qwen3-32B dense loaded and validated. Set up **OpenRouter client** with rate limiting and logging. Build the **statistical analysis module** (JSONL → metrics → visualizations). Run **OpenRouter broad scan** (SB1 only, 30 items) on 15-20 models. | 15-20 | ~$5 |
+| **Days 4-5 (Mar 21-22)** | Model selection + deep probes | Analyze broad scan, **select 6-8 models** for SB2 (filter: T2 N=8 accuracy 15-70%). Run **SB2 pilot** (3 instances, 4 core conditions) on selected models. Run **mechanistic probes** (conditions 7-10) on Flash. Build **human baseline web tool** (accepts JSON config). Start recruiting human participants. | 15-20 | ~$30 |
+| **Days 6-10 (Mar 23-27)** | Production runs | Run full **25-instance SB2** (4 core conditions) on 6-8 models. Run **extended conditions** (explanation, misleading) on top 3-4 models. Collect human baseline data (rolling recruitment). Begin analysis and visualization. **DISCRIMINATORY POWER CHECK:** Does the 2×2 decomposition show different patterns across models? Does FLR differ by model group (code vs chat, reasoning vs base)? | 20-25 | ~$80 |
+| **Days 11-14 (Mar 28-31)** | Kaggle SDK + analysis | Run **Kaggle SDK models** (4 models, full SB1 + SB2). Full statistical analysis with bootstrap CIs. Generate all visualizations (Gap Chart, 2×2 decomposition, radar, trajectories, model grouping). Write **pre-registered hypotheses document** (18 hypotheses). **Permutation test** for model groupings (code vs chat, reasoning vs standard). | 15-20 | ~$391 |
+| **Days 15-28 (Apr 1-16)** | Polish + submit | Any re-runs needed based on analysis. Write 1,500-word writeup (**Results section FIRST**). Create the Kaggle benchmark and tasks. Build the notebook. Create cover image (the Gap Chart). **If time permits:** thinking trace analysis (keyword coding). Submit before Apr 16 11:59 PM UTC. | 10-15 | $0 |
+| **Total** | | | **75-100 hrs** | **~$450-520** |
 
 ---
 
-## WHAT TO BUILD FIRST (Day 1 Priority)
+## WHAT TO BUILD FIRST (Day 1-2 Priority)
 
 0. **Email for quota top-up** — BEFORE writing code.
 1. **Build llama.cpp + download models** — Get local inference running. Qwen3.5-35B-A3B first (fastest for iteration). See `local_model_setup.md`.
-1b. **Build human baseline web tool** (~2 hours) — Single HTML/JS file. Same STS instances as model evaluation. Host on GitHub Pages. Needs: show examples, text input, compare answer, show feedback, log results. Build alongside STS generator since it uses the same instances.
 2. **GATE 0: Extraction validation**
    - Test `llm.prompt(..., schema=STSAnswer)` on 10 STS-formatted prompts per SDK model
    - Test JSON mode (`response_format={"type": "json_object"}`) on 10 prompts on Qwen3.5-35B-A3B
    - If structured output AND JSON mode work → extraction is solved, move on
    - If structured output fails → Tier 3 regex with 50-prompt validation gate (v8.0 fallback)
    - If JSON mode fails → Tier 3 regex with 50-prompt validation gate for local models
-   - **This gate is faster than v8.0's 50-prompt-per-model requirement** because structured output eliminates most parsing risk
 3. **Unicode symbol pre-screening** — Test 20 candidate symbols on accessible tokenizers (Qwen, Llama, tiktoken). Select 12 most consistent. 1-2 hours.
 4. **STS Generator + Solver** — Python class. Must output: STS instances (with ≥1 non-DIRECT rule constraint), nested training examples, Type R/E/L test items with verified answers and partial-rule predictions. Include zero-shot contamination check.
 5. **Partial-rule simulator** — Exception-blind, condition-blind, order-blind. Needed for Type L items AND for misleading feedback wrong answers in SB2.
 6. **Type E item generator** — Uses nested training sets. Verify ≥90% feasibility rate on 50 test STS instances.
 7. **Micro-grammar generator** — 7 micro-grammars with diverse rule types. Quick to build.
-8. **All 5 SB2 conditions (both implementations)** — Multi-turn AND single-prompt-with-history. Mechanical prompt style. Pilot both on 3 STS instances → pick one.
-9. **SB1 pilot on local models** — 225 items on Qwen3.5-35B-A3B. Free. Validate gradient + calibrate SB2 tier.
-10. **Informal human pilot** — 3-5 participants on STS correction via web tool. Decision gate: if humans improve → recruit remaining 15-17 on STS. If not → pivot to micro-grammar.
+8. **All 10 SB2 conditions** — 4 core (correction, practice-only, error-only, no-feedback) + 2 extended (explanation, misleading) + 4 mechanistic probes (clean-context, prompted-correction, structured-correction, reformatted-correction). Multi-turn AND single-prompt-with-history implementations. Pilot both on 3 STS instances → pick one.
+9. **Statistical analysis module** — Python module: JSONL in → metrics + visualizations out. Bootstrap CIs, 2×2 decomposition, per-model profiles, cross-model comparisons. Build once, reuse for every model.
+10. **OpenRouter client** — Rate-limited, logging client. Standardized interface matching local model API.
+11. **SB1 pilot on local models** — 225 items on Qwen3.5-35B-A3B. Free. Validate gradient + calibrate SB2 tier.
+12. **Run no-feedback + clean-context pilot** — 3 existing instances on Flash. 24 API calls. Trivial cost. Critical data for the SB2 < SB1 gap.
+13. **Run SB1 at N=16 and N=32** — On existing T2 instances (Flash). Provides the comparison data point.
+14. **Build human baseline web tool** (~2 hours) — Single HTML/JS file. Accepts JSON config for STS instance + condition type. Host on GitHub Pages. Two conditions: correction + clean-context.
+15. **Informal human pilot** — 3-5 participants on STS correction via web tool. Decision gate: if humans improve → recruit remaining 15-17 on STS. If not → pivot to micro-grammar.
+16. **OpenRouter broad scan** — SB1 only (30 items) on 15-20 candidate models. Maps the landscape. ~$2-5.
 
-**Gate: End of Week 1**
+**Gate: End of Day 3 (Mar 20)**
 - If extraction works (any tier) AND gradient exists AND SB2 implementation picked → full speed ahead
 - If extraction fails at all tiers: this is the existential risk. Debug until solved. Nothing else matters.
 - If gradient exists but strategy items show no signal → drop strategy analysis, proceed with learning curves + feedback only
 - If no gradient → STS rework, pause everything
 - **SB2 calibration complete:** Record which tier gives ~35-45% baseline accuracy. Concentrate SB2 there.
 - **SB2 implementation selected:** Multi-turn or single-prompt-with-history based on pilot.
-- **SB2 early signal (v10.1):** Minimal SB2 pilot (3 STS, correction vs. practice-only) gives a preliminary FLR read. If FLR ≈ 0 even on this small sample → begin preparing the "universal feedback blindness" headline narrative immediately. If FLR > 0 → proceed with the gradient narrative. Either way, you know the story direction before investing 20+ hours in Week 2.
-- **Human pilot results in hand:** Know whether to proceed with STS or pivot to micro-grammar for remaining 15-17 participants. Begin rolling recruitment immediately.
-- **By end of Week 1 you should have preliminary local model results AND a preliminary SB2 signal at ZERO cost.**
+- **No-feedback + clean-context pilot data in hand:** Know whether context pollution explains the SB2 < SB1 gap.
+- **SB1 N=16/N=32 data in hand:** Comparison point for SB2's "accumulated examples" effect.
+- **OpenRouter broad scan complete:** Landscape of 15-20 models mapped. Models filtered for Phase 2.
+- **By end of Day 3 you should have pilot data on Flash + landscape scan on 15-20 models.**
 
-**Gate: End of Week 2 (DISCRIMINATORY POWER)**
-- Run SB2 all 5 conditions on 2 local models at calibrated tier (25 STS instances for core, 15 for Misleading)
+**Gate: End of Day 5 (Mar 22)**
+- **Model selection complete:** 6-8 models selected for production SB2 based on broad scan + hypothesis testing.
+- **SB2 pilot on selected models:** 3 instances, 4 core conditions. Early FLR read across model groups.
+- **Mechanistic probes complete on Flash:** Clean-context, prompted-correction, structured-correction, reformatted results.
+- **Human pilot results in hand:** Know whether to proceed with STS or pivot to micro-grammar.
+- **Story direction clear:** Universal blindness? Code-tuning advantage? Context pollution? Know the headline.
+
+**Gate: End of Day 10 (Mar 27) — DISCRIMINATORY POWER**
+- Full 25-instance SB2 (4 core conditions) on 6-8 models complete.
 - The 2×2 decomposition: does evaluation effect ≠ answer effect?
-- If FLR or 2×2 pattern differs between models → proceed
+- **Permutation test:** Do model groupings (code vs chat, reasoning vs standard) differ on FLR?
+- If FLR or 2×2 pattern differs between model groups → proceed with grouped analysis
 - If ALL metrics identical across models → pivot narrative to "universal feedback blindness" (still novel, still publishable)
 - **Do not wait until Week 4 to discover zero discrimination**
-- **By end of Week 2 you should have preliminary results on 2-3 local models with ZERO quota spend.**
 
 ---
 
-## What v10 refimnes on (our refinement direction to prevent thrashing on issues)
+## VERSION HISTORY (refinement direction to prevent thrashing)
 
-| Dimension | v8.0  | v9.0  | v10.0/10.1  | v10.2  |
-|---|---|---|---|---|
-| **Narrative** | ONE story: 2×2 factorial | ONE story (unchanged) | Dual-ready: gradient + "universal blindness" | **Unchanged** |
-| **"First" claims** | "First benchmark to test..." (overclaims) | Same | Sharpened + defensible | **Unchanged** |
-| **Literature gaps** | Missing LLF-Bench, FB-Bench, Self-Correction Bench | Same | All added + Hamdan & Yuret 2025 (Likra) | **Unchanged** |
-| **Human baselines** | Prolific, $500, 50 people, between-subjects | Same | Same | **20 informal participants, $0, all-correction, within-subjects optional. Web tool on GitHub Pages. Honest framing as directional reference.** |
-| **Human baseline design** | 25/condition × 2 conditions | Same | Same | **All 20 do Correction (key comparison is human-vs-model trajectory). Optional within-subjects Practice-only on second STS → 20 paired observations.** |
-| **Statistical framing** | Inferential (power ~55%) | Same | Same | **Descriptive (trajectory + bootstrap CIs). N=20 adequate for large expected effect. No false claims of inferential power.** |
-| **H7 (human comparison)** | Human FLR > model FLR | Same | Same | **Human accuracy improvement (turns 7-12 mean − turns 1-3 mean) > model improvement. Simpler, honest for N=20.** |
-| **SB2 piloting** | Week 2 | Week 2 | Front-loaded to Week 1 | **Unchanged** |
-| **Null-result narrative** | Risk register row | Risk register row | First-class dual headline | **Unchanged** |
-| **Web tool** | N/A | N/A | N/A | **Day 1 build (~2 hrs). HTML/JS, GitHub Pages, same STS instances as models.** |
-| **Total items** | 3,225 | 3,195 | 3,075 | **Unchanged** |
-| **Budget** | ~$387 + $500 Prolific | ~$410 + $500 Prolific | ~$391 + $500 Prolific = ~$891 | **~$391 total ($0 human baselines). ~$109 breathing room.** |
-| **Execution risk** | Medium | Lower | Lowest | **Lowest: $500 saved, no Prolific dependency, rolling recruitment** |
+| Dimension | v8.0  | v9.0  | v10.0/10.1  | v10.2  | v11.0 |
+|---|---|---|---|---|---|
+| **Narrative** | ONE story: 2×2 factorial | ONE story (unchanged) | Dual-ready: gradient + "universal blindness" | Unchanged | **Triple-ready: gradient + universal blindness + code-training hypothesis** |
+| **2×2 Design** | SB1 as baseline cell | Same | Same | Same | **No-feedback condition fills baseline cell. True 2×2, all same format. Proper marginal averaging.** |
+| **Conditions** | 5 (correction, explanation, practice, error, misleading) | Same | Same | Same | **10 total: 4 core + 2 extended + 4 mechanistic probes (clean-context, prompted, structured, reformatted)** |
+| **Models** | 9 (4 SDK + 5 local) | Same | Same | Same | **15-20 (4 SDK + 8 OpenRouter + 5 local). Two-phase hypothesis-driven selection: broad scan → filtered deep dive.** |
+| **Model selection** | Architecture diversity | Same | Same | Same | **Hypothesis-driven: scale (H1), code-training (H2), reasoning-RL (H3), architecture (H4). Each model tests a specific claim.** |
+| **SB2 < SB1 gap** | Not observed | Not observed | Not observed | Not observed | **Dedicated section + mechanistic probes. Context pollution, format degradation, lost-in-the-middle tested explicitly.** |
+| **SB1 extended** | N=2,4,8,16,32 | Same | Same | Same | **Added N=16, N=32 on existing instances for comparison with SB2 "accumulated examples" effect** |
+| **Statistical infrastructure** | Ad hoc | Same | Same | Same | **Dedicated analysis module: JSONL → metrics → visualizations. Bootstrap CIs, permutation tests for model groupings.** |
+| **Human baselines** | Prolific, $500, 50 people | Same | Same | 20 informal, $0 | **20 informal, $0, correction + clean-context within-subjects. Tests context pollution in humans vs models.** |
+| **Literature gaps** | Missing LLF-Bench, FB-Bench, Self-Correction Bench | Same | All added + Hamdan & Yuret 2025 (Likra) | Unchanged | **Unchanged** |
+| **SB2 piloting** | Week 2 | Week 2 | Front-loaded to Week 1 | Unchanged | **Days 2-3. No-feedback + clean-context pilot immediately.** |
+| **Hypotheses** | 13 | Same | Same | Same | **18 (added H14-H18: context pollution, code-training, reasoning-RL, format sensitivity, no-feedback)** |
+| **Budget** | ~$387 + $500 Prolific | ~$410 + $500 Prolific | ~$391 + $500 Prolific | ~$391 total | **~$450-520 total (Kaggle SDK $391 + OpenRouter $60-125 + $0 human baselines)** |
+| **Execution risk** | Medium | Lower | Lowest | Lowest | **Lowest: more models at modest cost increase. OpenRouter budget is flexible.** |

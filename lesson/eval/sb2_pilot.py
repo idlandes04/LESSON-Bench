@@ -2,9 +2,13 @@ from __future__ import annotations
 
 """SB2 pilot evaluation runner.
 
-Tests feedback conditions (correction, practice_only, error_only, explanation,
-misleading) in a multi-turn setting to measure how different feedback types
-affect within-session learning.
+Tests feedback conditions in a multi-turn setting to measure how different
+feedback types affect within-session learning.
+
+Core conditions (v11.0): correction, practice_only, error_only, no_feedback
+Extended: explanation, misleading
+Mechanistic probes: clean_context, prompted_correction, structured_correction,
+    reformatted_correction
 
 v9.0+ improvements:
 - Structured JSON output via send_json() as primary extraction
@@ -12,6 +16,13 @@ v9.0+ improvements:
 - Raw responses logged for debugging
 - Answer normalization for robust comparison
 - Tiered fallback: JSON → symbol-aware → regex
+
+v11.0 additions needed:
+- no_feedback condition ("Next question." — no evaluation, no answer)
+- clean_context condition (single-prompt-with-history, correct pairs only)
+- prompted_correction condition (reflection prompt after error)
+- structured_correction condition (code-test-style error format)
+- reformatted_correction condition (example-formatted feedback)
 """
 
 import random
