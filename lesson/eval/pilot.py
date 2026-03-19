@@ -13,10 +13,22 @@ v9.0+ improvements:
 - Tiered fallback: JSON → symbol-aware → regex
 """
 
+import logging
 import random
+import sys
 import concurrent.futures
 import threading
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
+
+
+def _safe_print(msg: str) -> None:
+    """Print with fallback for Windows consoles that can't encode Unicode."""
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(msg.encode("utf-8", errors="replace").decode("ascii", errors="replace"))
 
 from lesson.sts.generator import generate_dataset, format_training_examples
 from lesson.sts.types import STSDataset, TestItem
@@ -77,10 +89,17 @@ def _eval_single_item(
 
     try:
         raw_response = client.prompt_json(prompt)
-    except Exception:
+    except Exception as exc:
+        log.warning("prompt_json failed for %s (T%d N=%d): %s", sts_id, tier, n, exc)
+        raw_response = ""
+
+    # If prompt_json returned empty (some providers silently fail with JSON
+    # schema mode), fall back to plain prompt
+    if not raw_response.strip():
         try:
             raw_response = client.prompt(prompt)
-        except Exception:
+        except Exception as exc2:
+            log.error("prompt fallback also failed for %s: %s", sts_id, exc2)
             raw_response = ""
 
     model_answer = extract_answer(raw_response, mode="json", vocabulary=alphabet)
@@ -235,7 +254,7 @@ def _run_sb1_sequential(
                     )
 
                     status = "CORRECT" if result["correct"] else f"wrong (got {result['model_answer']!r}, expected {result['expected_answer']!r})"
-                    print(f"  item {item_idx} [{item.item_type.value}] {item.input_seq} → {status}")
+                    _safe_print(f"  item {item_idx} [{item.item_type.value}] {item.input_seq} -> {status}")
 
     summary = _build_summary(all_results)
     _print_summary(summary)
@@ -285,7 +304,7 @@ def _run_sb1_parallel(
                     )
                 except Exception as exc:
                     with print_lock:
-                        print(f"  WARNING: generate_dataset failed (seed={seed}): {exc}")
+                        _safe_print(f"  WARNING: generate_dataset failed (seed={seed}): {exc}")
                     continue
 
                 examples_text = format_training_examples(dataset.training_examples)
@@ -333,8 +352,8 @@ def _run_sb1_parallel(
                 )
                 completed_count[0] += 1
                 status = "CORRECT" if result["correct"] else f"wrong (got {result['model_answer']!r})"
-                print(f"  [{completed_count[0]}/{len(work_items)}] T{tier} N={n} i{inst_idx} "
-                      f"[{item.item_type.value}] {item.input_seq} → {status}")
+                _safe_print(f"  [{completed_count[0]}/{len(work_items)}] T{tier} N={n} i{inst_idx} "
+                      f"[{item.item_type.value}] {item.input_seq} -> {status}")
 
     summary = _build_summary(all_results)
     _print_summary(summary)

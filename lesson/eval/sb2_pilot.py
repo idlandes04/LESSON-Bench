@@ -25,7 +25,9 @@ v11.0 additions:
 - reformatted_correction condition (example-formatted feedback)
 """
 
+import concurrent.futures
 import random
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from lesson.sts.generator import (
@@ -271,6 +273,7 @@ def run_sb2_pilot(
     n_instances: int = 3,
     n_turns: int = 6,
     conditions: List[str] = ["correction", "practice_only"],
+    max_parallel: int = 1,
 ) -> Dict[str, Any]:
     """Run minimal SB2 pilot: feedback condition comparisons on a few instances.
 
@@ -299,6 +302,8 @@ def run_sb2_pilot(
         n_instances:         Number of independent STS instances.
         n_turns:             Number of test turns per (instance, condition) cell.
         conditions:          List of feedback condition names to evaluate.
+        max_parallel:        Maximum number of (instance, condition) cells to run
+                             in parallel. Defaults to 1 (sequential).
 
     Returns:
         {
@@ -310,10 +315,12 @@ def run_sb2_pilot(
     all_results: List[Dict[str, Any]] = []
     model_name = getattr(client, "name", "unknown")
     log = InteractionLog(f"{model_name}_sb2")
+    print_lock = threading.Lock()
 
-    total_cells = n_instances * len(conditions)
-    cell_idx = 0
-
+    # ------------------------------------------------------------------
+    # Pre-generate all instances and build the list of cells
+    # ------------------------------------------------------------------
+    cells = []  # Each entry holds everything needed for one (instance, condition) run
     for inst_idx in range(n_instances):
         seed = tier * 10_000 + inst_idx
         rng = random.Random(seed + 5000)
@@ -347,123 +354,80 @@ def run_sb2_pilot(
         print(f"  Vocabulary: {vocab_line}")
 
         for condition in conditions:
-            cell_idx += 1
-            print(f"  [{cell_idx}/{total_cells}] condition={condition!r}")
+            cells.append({
+                "inst_idx": inst_idx,
+                "condition": condition,
+                "sts": sts,
+                "examples_text": examples_text,
+                "alphabet": alphabet,
+                "vocab_line": vocab_line,
+                "test_sequence": test_sequence,
+                "n_initial_examples": n_initial_examples,
+                "tier": tier,
+                "n_turns": n_turns,
+                "seed": seed,
+            })
 
-            # ---------------------------------------------------------------
-            # clean_context: single-prompt-with-growing-context code path
-            # ---------------------------------------------------------------
-            if condition == "clean_context":
-                accumulated_examples: List[Tuple[str, str]] = []
+    total_cells = len(cells)
 
-                for turn_idx, (inp, correct) in enumerate(test_sequence):
-                    prompt = _build_clean_context_prompt(
-                        examples_text=examples_text,
-                        vocab_line=vocab_line,
-                        n_initial_examples=n_initial_examples,
-                        accumulated_examples=accumulated_examples,
-                        input_seq=inp,
-                    )
+    # ------------------------------------------------------------------
+    # Helper: run a single (instance, condition) cell
+    # ------------------------------------------------------------------
+    def _run_cell(
+        cell_num: int,
+        total: int,
+        cell: Dict[str, Any],
+        log_lock: Optional[threading.Lock],
+    ) -> List[Dict[str, Any]]:
+        """Execute one (instance, condition) cell and return result dicts."""
+        inst_idx = cell["inst_idx"]
+        condition = cell["condition"]
+        sts = cell["sts"]
+        examples_text = cell["examples_text"]
+        alphabet = cell["alphabet"]
+        vocab_line = cell["vocab_line"]
+        test_sequence = cell["test_sequence"]
+        n_init = cell["n_initial_examples"]
+        c_tier = cell["tier"]
+        c_n_turns = cell["n_turns"]
+        c_seed = cell["seed"]
 
-                    try:
-                        raw_response = client.prompt_json(prompt)
-                    except Exception as exc:
-                        print(f"    ERROR on turn {turn_idx}: {exc}")
-                        raw_response = ""
+        cell_results: List[Dict[str, Any]] = []
 
-                    model_answer = extract_answer(
-                        raw_response,
-                        mode="json",
-                        vocabulary=alphabet,
-                    )
+        # Each cell gets its own RNG seeded deterministically
+        cell_rng = random.Random(c_seed + 5000 + hash(condition))
 
-                    expected = normalize_answer(correct)
-                    is_correct = model_answer == expected
+        with print_lock:
+            print(f"  [{cell_num}/{total}] condition={condition!r}")
 
-                    # Always accumulate the correct pair (regardless of model accuracy)
-                    accumulated_examples.append((inp, correct))
-
-                    result = {
-                        "condition": condition,
-                        "instance_idx": inst_idx,
-                        "sts_id": sts.id,
-                        "tier": tier,
-                        "turn_idx": turn_idx,
-                        "input_seq": inp,
-                        "correct": is_correct,
-                        "model_answer": model_answer,
-                        "expected_answer": expected,
-                        "feedback_given": "(clean_context — no feedback)",
-                        "raw_response": raw_response,
-                        "vocabulary": alphabet,
-                    }
-                    all_results.append(result)
-
-                    log.record(
-                        prompt=prompt,
-                        raw_response=raw_response,
-                        extracted=model_answer,
-                        expected=expected,
-                        correct=is_correct,
-                        metadata={
-                            "condition": condition, "tier": tier,
-                            "instance": inst_idx, "turn": turn_idx,
-                            "input_seq": inp,
-                            "n_accumulated": len(accumulated_examples),
-                        },
-                    )
-
-                    status = "OK" if is_correct else f"WRONG (got {model_answer!r})"
-                    print(f"    turn {turn_idx}: {inp} \u2192 {status}")
-
-                continue  # skip the multi-turn code path below
-
-            # ---------------------------------------------------------------
-            # Standard multi-turn code path
-            # ---------------------------------------------------------------
-
-            # Determine misleading turns (every 3rd turn for "misleading" condition)
-            mislead_turns = set()  # type: set
-            if condition == "misleading":
-                mislead_turns = {i for i in range(n_turns) if (i + 1) % 3 == 0}
-
-            session = client.multi_turn()
-            session.reset()
-
-            # System context: inject training examples + vocabulary
-            context_msg = (
-                f"You are learning a symbolic transformation system.\n"
-                f"The system uses these symbols: {vocab_line}\n"
-                f"Here are {n_initial_examples} examples:\n\n{examples_text}\n\n"
-                "Study the pattern. You will be tested on it turn by turn.\n"
-                'For each question, respond with ONLY a JSON object: {"output": "YOUR_ANSWER"}\n'
-                "Use only the symbols listed above in your answer."
-            )
-            session.inject(context_msg, role="user")
-            session.inject('{"output": "understood"}', role="assistant")
+        # -----------------------------------------------------------
+        # clean_context: single-prompt-with-growing-context code path
+        # -----------------------------------------------------------
+        if condition == "clean_context":
+            accumulated_examples: List[Tuple[str, str]] = []
 
             for turn_idx, (inp, correct) in enumerate(test_sequence):
-                # Ask the model for the output
-                question = (
-                    f"What is the output for: {inp}\n"
-                    'Respond with ONLY: {{"output": "YOUR_ANSWER"}}'
+                prompt = _build_clean_context_prompt(
+                    examples_text=examples_text,
+                    vocab_line=vocab_line,
+                    n_initial_examples=n_init,
+                    accumulated_examples=accumulated_examples,
+                    input_seq=inp,
                 )
 
                 try:
-                    raw_response = session.send_json(question, role="user")
-                except Exception:
-                    # send_json already appended the user message to history
-                    # before the API call failed — remove it to avoid
-                    # double-injection when we fall back to plain send.
-                    if hasattr(session, '_history') and session._history:
-                        session._history.pop()
-                    try:
-                        raw_response = session.send(question, role="user")
-                    except Exception as exc:
+                    raw_response = client.prompt_json(prompt)
+                except Exception as exc:
+                    with print_lock:
                         print(f"    ERROR on turn {turn_idx}: {exc}")
+                    raw_response = ""
+
+                if not raw_response.strip():
+                    try:
+                        raw_response = client.prompt(prompt)
+                    except Exception:
                         raw_response = ""
 
-                # Tiered extraction: JSON → symbol-aware → regex
                 model_answer = extract_answer(
                     raw_response,
                     mode="json",
@@ -473,35 +437,174 @@ def run_sb2_pilot(
                 expected = normalize_answer(correct)
                 is_correct = model_answer == expected
 
-                # Generate and inject feedback
-                feedback = _generate_feedback(
-                    condition=condition,
-                    sts=sts,
-                    input_seq=inp,
-                    correct=correct,
-                    model_answer=model_answer,
-                    rng=rng,
-                    mislead_this_turn=(turn_idx in mislead_turns),
-                )
-                session.inject(feedback, role="user")
+                # Always accumulate the correct pair (regardless of model accuracy)
+                accumulated_examples.append((inp, correct))
 
                 result = {
                     "condition": condition,
                     "instance_idx": inst_idx,
                     "sts_id": sts.id,
-                    "tier": tier,
+                    "tier": c_tier,
                     "turn_idx": turn_idx,
                     "input_seq": inp,
                     "correct": is_correct,
                     "model_answer": model_answer,
                     "expected_answer": expected,
-                    "feedback_given": feedback,
+                    "feedback_given": "(clean_context — no feedback)",
                     "raw_response": raw_response,
                     "vocabulary": alphabet,
                 }
-                all_results.append(result)
+                cell_results.append(result)
 
-                # Log the interaction for debugging
+                if log_lock is not None:
+                    with log_lock:
+                        log.record(
+                            prompt=prompt,
+                            raw_response=raw_response,
+                            extracted=model_answer,
+                            expected=expected,
+                            correct=is_correct,
+                            metadata={
+                                "condition": condition, "tier": c_tier,
+                                "instance": inst_idx, "turn": turn_idx,
+                                "input_seq": inp,
+                                "n_accumulated": len(accumulated_examples),
+                            },
+                        )
+                else:
+                    log.record(
+                        prompt=prompt,
+                        raw_response=raw_response,
+                        extracted=model_answer,
+                        expected=expected,
+                        correct=is_correct,
+                        metadata={
+                            "condition": condition, "tier": c_tier,
+                            "instance": inst_idx, "turn": turn_idx,
+                            "input_seq": inp,
+                            "n_accumulated": len(accumulated_examples),
+                        },
+                    )
+
+                status = "OK" if is_correct else f"WRONG (got {model_answer!r})"
+                with print_lock:
+                    print(f"    turn {turn_idx}: {inp} \u2192 {status}")
+
+            return cell_results
+
+        # -----------------------------------------------------------
+        # Standard multi-turn code path
+        # -----------------------------------------------------------
+
+        # Determine misleading turns (every 3rd turn for "misleading" condition)
+        mislead_turns: set = set()
+        if condition == "misleading":
+            mislead_turns = {i for i in range(c_n_turns) if (i + 1) % 3 == 0}
+
+        session = client.multi_turn()
+        session.reset()
+
+        # System context: inject training examples + vocabulary
+        context_msg = (
+            f"You are learning a symbolic transformation system.\n"
+            f"The system uses these symbols: {vocab_line}\n"
+            f"Here are {n_init} examples:\n\n{examples_text}\n\n"
+            "Study the pattern. You will be tested on it turn by turn.\n"
+            'For each question, respond with ONLY a JSON object: {"output": "YOUR_ANSWER"}\n'
+            "Use only the symbols listed above in your answer."
+        )
+        session.inject(context_msg, role="user")
+        session.inject('{"output": "understood"}', role="assistant")
+
+        for turn_idx, (inp, correct) in enumerate(test_sequence):
+            # Ask the model for the output
+            question = (
+                f"What is the output for: {inp}\n"
+                'Respond with ONLY: {{"output": "YOUR_ANSWER"}}'
+            )
+
+            try:
+                raw_response = session.send_json(question, role="user")
+            except Exception:
+                # send_json already appended the user message to history
+                # before the API call failed — remove it to avoid
+                # double-injection when we fall back to plain send.
+                if hasattr(session, '_history') and session._history:
+                    session._history.pop()
+                raw_response = ""
+
+            # If send_json returned empty (provider silently fails with JSON
+            # schema), fall back to plain send
+            if not raw_response.strip():
+                # Remove empty assistant reply from history if send_json added one
+                if hasattr(session, '_history') and session._history and \
+                   session._history[-1].get('role') == 'assistant' and \
+                   not session._history[-1].get('content', '').strip():
+                    session._history.pop()
+                    # Also remove the user message that send_json added
+                    if session._history and session._history[-1].get('role') == 'user':
+                        session._history.pop()
+                try:
+                    raw_response = session.send(question, role="user")
+                except Exception as exc:
+                    with print_lock:
+                        print(f"    ERROR on turn {turn_idx}: {exc}")
+                    raw_response = ""
+
+            # Tiered extraction: JSON → symbol-aware → regex
+            model_answer = extract_answer(
+                raw_response,
+                mode="json",
+                vocabulary=alphabet,
+            )
+
+            expected = normalize_answer(correct)
+            is_correct = model_answer == expected
+
+            # Generate and inject feedback
+            feedback = _generate_feedback(
+                condition=condition,
+                sts=sts,
+                input_seq=inp,
+                correct=correct,
+                model_answer=model_answer,
+                rng=cell_rng,
+                mislead_this_turn=(turn_idx in mislead_turns),
+            )
+            session.inject(feedback, role="user")
+
+            result = {
+                "condition": condition,
+                "instance_idx": inst_idx,
+                "sts_id": sts.id,
+                "tier": c_tier,
+                "turn_idx": turn_idx,
+                "input_seq": inp,
+                "correct": is_correct,
+                "model_answer": model_answer,
+                "expected_answer": expected,
+                "feedback_given": feedback,
+                "raw_response": raw_response,
+                "vocabulary": alphabet,
+            }
+            cell_results.append(result)
+
+            # Log the interaction for debugging
+            if log_lock is not None:
+                with log_lock:
+                    log.record(
+                        prompt=question,
+                        raw_response=raw_response,
+                        extracted=model_answer,
+                        expected=expected,
+                        correct=is_correct,
+                        metadata={
+                            "condition": condition, "tier": c_tier,
+                            "instance": inst_idx, "turn": turn_idx,
+                            "input_seq": inp, "feedback": feedback,
+                        },
+                    )
+            else:
                 log.record(
                     prompt=question,
                     raw_response=raw_response,
@@ -509,14 +612,35 @@ def run_sb2_pilot(
                     expected=expected,
                     correct=is_correct,
                     metadata={
-                        "condition": condition, "tier": tier,
+                        "condition": condition, "tier": c_tier,
                         "instance": inst_idx, "turn": turn_idx,
                         "input_seq": inp, "feedback": feedback,
                     },
                 )
 
-                status = "OK" if is_correct else f"WRONG (got {model_answer!r})"
+            status = "OK" if is_correct else f"WRONG (got {model_answer!r})"
+            with print_lock:
                 print(f"    turn {turn_idx}: {inp} \u2192 {status}")
+
+        return cell_results
+
+    # ------------------------------------------------------------------
+    # Execute cells: sequential or parallel
+    # ------------------------------------------------------------------
+    if max_parallel <= 1:
+        for i, cell in enumerate(cells):
+            results = _run_cell(i + 1, total_cells, cell, None)
+            all_results.extend(results)
+    else:
+        log_lock = threading.Lock()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = {}
+            for i, cell in enumerate(cells):
+                f = pool.submit(_run_cell, i + 1, total_cells, cell, log_lock)
+                futures[f] = cell
+            for f in concurrent.futures.as_completed(futures):
+                results = f.result()
+                all_results.extend(results)
 
     # Build summary: condition -> turn_idx -> {n_correct, n_total}
     summary: Dict[str, Dict[int, Dict[str, int]]] = {}

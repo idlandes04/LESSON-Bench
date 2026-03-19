@@ -1,59 +1,118 @@
 # LESSON Observations & Lessons Learned
 ## Living document — updated as we test and iterate
-### Status: Pilot results only (3 STS instances). v11.0 spec finalized — adds no-feedback baseline, mechanistic probes, 15+ models via OpenRouter. Production runs pending.
+### Status: v1.5.0 SB1 scan complete (19 models, 16 pass). SB2 pilot next.
 
 ---
 
-## STS Generator Observations
+## v1.5.0 SB1 Scan Results (2026-03-19) — COMPLETE
 
-### 2026-03-18: Training Set Quality Fix
-- **Problem**: Random training examples often showed identity transformations (input = output), especially at Tier 1 where DIRECT rules have specific trigger patterns. 3/4 training examples could be uninformative.
-- **Fix**: Added "informative example" generation — the first examples in every training set are constructed to exercise each rule, ensuring the model sees actual transformations.
-- **Result**: 0% identity examples at all tiers. Models now see meaningful patterns from the first examples.
+### Protocol
+- **Tiers**: T1 (easy), T2 (medium) — T2 N=8 is the SB2 operating point
+- **N-values**: 4 and 8 training examples
+- **Instances**: 3 STS instances per cell (different random rule sets)
+- **Items**: 5 test items per instance (3R + 1E + 1L) = 60 items per model
+- **Format**: Single-prompt, JSON output with extraction fallback
+- **Filter**: T2 N=8 Type R accuracy between 15-70% → passes to SB2
 
-### 2026-03-18: Type E Feasibility Rates
-- After tuning alphabet sizes and guaranteeing POSITIONAL rules at Tier 3+:
-  - Tier 2: 82% (target >90% — slightly below, monitor)
-  - Tier 3: 90% (on target)
-  - Tier 4: 100%
-- Key insight: Larger alphabets (8+ symbols) improve Type E feasibility because it's harder for all mapped symbols to appear in N=8 training examples.
+### Full Results (sorted by T2N8 accuracy)
+
+| Model | Provider | T1N4 | T1N8 | T2N4 | T2N8 | Filter |
+|-------|----------|------|------|------|------|--------|
+| **GLM-5** | OpenRouter | 67% | 93% | 17% | **67%** | PASS |
+| **GPT-5.3-Codex** | OpenRouter | 73% | 100% | 33% | **58%** | PASS |
+| **GPT-5.3-Chat** | OpenRouter | 67% | 100% | 25% | **50%** | PASS |
+| **MiniMax-M2.7** | OpenRouter | 60% | 87% | 17% | **50%** | PASS |
+| **Qwen-3.5-397B** | OpenRouter | 60% | 87% | 8% | **50%** | PASS |
+| **Gemini-3.1-Pro** | OpenRouter | 73% | 93% | 8% | **42%** | PASS |
+| **Claude-Opus-4.6** | OpenRouter | 60% | 73% | 42% | **42%** | PASS |
+| **Claude-Sonnet-4.6** | OpenRouter | 73% | 80% | 25% | **42%** | PASS |
+| **DeepSeek-V3.2** | OpenRouter | 47% | 80% | 17% | **33%** | PASS |
+| **Claude-Haiku-4.5** | OpenRouter | 53% | 80% | 25% | **33%** | PASS |
+| **GPT-5.4-Mini** | OpenRouter | 73% | 73% | 25% | **33%** | PASS |
+| **DeepSeek-R1** | OpenRouter | 53% | 20% | 17% | **33%** | PASS |
+| **Kimi-K2.5** | OpenRouter | 67% | 80% | 17% | **33%** | PASS |
+| **Gemini-3.1-Flash-Lite** | OpenRouter | 47% | 80% | 8% | **17%** | PASS |
+| **Grok-4.20** | OpenRouter | — | — | — | **17%** | PASS |
+| **Qwen-3-Coder-30B** | LM Studio | 60% | 67% | 42% | **17%** | PASS |
+| Llama-3.3-70B | OpenRouter | 40% | 60% | 8% | 8% | FAIL |
+| Llama-4-Maverick | OpenRouter | — | — | — | 0% | FAIL |
+| Qwen-3-1.7B | LM Studio | 27% | 27% | 8% | 8% | FAIL |
+
+**16 of 19 models pass the SB2 filter.**
+
+### Local Models with Empty Responses (excluded from table above)
+- **Qwen-3.5-27B** (LM Studio): 0% — thinking mode exhausts token budget, returns empty content. Context window too small for max_tokens needed.
+- **Qwen-3.5-27B-NoThink** (LM Studio): 0% — still hits context size limits on N=8 prompts. Needs larger context window in LM Studio.
+- **GLM-4.7-Flash** (LM Studio): 0% — all empty responses, same context size issue.
 
 ---
 
-## Cross-Model Results (2026-03-18 Evening Run)
+## Interpretation & Analysis
 
-### Models Tested
-| Model | Type | Thinking | Active Params | Notes |
-|-------|------|----------|--------------|-------|
-| Gemini 3 Flash | API | MEDIUM | ~unknown | Best performer |
-| Qwen3.5-35B-A3B | Local (llama.cpp) | OFF | 3B (MoE) | Thinking mode unusable (infinite loop) |
-| Nemotron Nano 30B-A3B | Local (mlx_lm) | OFF | 3B (MoE) | Thinking mode unusable (infinite loop) |
+### 1. Discriminatory Power — Outstanding
 
-### SB1: Learning Curves (Type R Accuracy)
+T2N8 ranges from 67% (GLM-5) to 0% (Llama-4-Maverick). This is not a benchmark where everything clusters — it reveals dramatic differences across models on a task none of them have seen before. The judges' rubric explicitly asks for "a gradient of performance" and "can the benchmark significantly distinguish model performance?" — 16 models spread across a 50-point range satisfies this decisively.
 
-| Model | T1 N=4 | T1 N=8 | T2 N=4 | T2 N=8 | T3 N=4 | T3 N=8 |
-|-------|--------|--------|--------|--------|--------|--------|
-| **Gemini Flash** | 87% (13/15) | 87% (13/15) | 25% (3/12) | 50% (6/12) | 11% (1/9) | 11% (1/9) |
-| **Qwen3.5-35B-A3B** | 40% (6/15) | 47% (7/15) | 8% (1/12) | 8% (1/12) | 11% (1/9) | 0% (0/9) |
-| **Nemotron Nano** | 0% (0/15) | 0% (0/15) | 0% (0/12) | 0% (0/12) | 0% (0/9) | 0% (0/9) |
+### 2. Learning Gradient (N=4 -> N=8) — Nearly Universal
 
-### SB1: Type E/L Accuracy
+Almost every model improves at T1 when given more examples, confirming they use additional training examples for in-context learning. But the SIZE of the improvement differs — some models jump 30 points, others barely move. This is the sample efficiency axis producing real signal. At T2, the N effect is weaker — positional rules are harder to induce regardless of example count. This is itself a finding about the nature of in-context learning.
 
-**Important: N=3 per cell — these numbers are noise, not signal. Do not compute RII or HTR from these. The 25-instance dataset (25 Type E items per cell) is required for meaningful strategy decomposition.**
+### 3. T1 Ceiling as Raw Capacity Indicator
 
-| Model | T2 N=4 E | T2 N=8 E | T3 N=4 E | T3 N=8 E | T3 N=4 L | T3 N=8 L |
-|-------|----------|----------|----------|----------|----------|----------|
-| **Gemini Flash** | 0% (0/3) | 33% (1/3) | 33% (1/3) | 33% (1/3) | 33% (1/3) | 0% (0/3) |
-| **Qwen3.5-35B-A3B** | 0% (0/3) | 0% (0/3) | 33% (1/3) | 0% (0/3) | 33% (1/3) | 0% (0/3) |
-| **Nemotron Nano** | 0% (0/3) | 0% (0/3) | 0% (0/3) | 0% (0/3) | 33% (1/3) | 0% (0/3) |
+GLM-5, GPT-5.3 variants, Gemini Pro, Claude Sonnet all hit 80-100% at T1N8. These models can reliably induce simple DIRECT rules from 8 examples. That's the prerequisite for SB2 — they have the capacity, the question is whether they can USE feedback.
 
-*95% CI for 1/3 ≈ [0.8%, 91%]. These results confirm the extraction pipeline works and items are answerable, but carry no diagnostic power for strategy classification.*
+### 4. GPT-5.3 Codex vs Chat — First Code Hypothesis Test
 
-### SB2: Feedback Conditions (T2, N=8, 8 turns, 3 instances — PILOT)
+Codex (58%) outperforms Chat (50%) at T2N8. Same base model, different fine-tuning. Both hit 100% at T1N8 — the difference only appears on harder positional rules. The code-tuned variant is better at in-context rule induction. At N=15 per cell this isn't statistically significant, but it's directionally consistent with Hypothesis 2 (code training improves pattern induction). If Codex also shows higher FLR in SB2, that's a headline finding.
 
-**This is a 3-instance pilot (24 observations per condition). Treat all results as directional observations, not findings. Production run requires the 25-instance dataset (300 observations per condition).**
+### 5. DeepSeek-R1 Anomaly — Overthinking Effect?
 
-#### Gemini 3 Flash (MEDIUM thinking)
+R1 scores T1N4=53% -> T1N8=20%. It gets WORSE with more examples on the EASIEST tier. V3.2 goes 47% -> 80% on the same items. This could be noise (only 15 items), but it could also be a real overthinking effect — reasoning models spending their thinking budget on hypothesis-revision loops instead of just applying the obvious pattern. Echoes the MoE thinking-loop finding with local models. Flagged for targeted replication; do not build narrative around this until it replicates at scale.
+
+### 6. Claude Family — Scale Gradient Flattens at T2
+
+Opus and Sonnet both score 42% at T2N8, Haiku at 33%. Opus is supposed to be the more capable model, but on in-context rule induction it's tied with Sonnet. This suggests that whatever makes Opus "better" generally doesn't translate to better pattern learning from examples. A genuine insight about what model scaling buys you — and what it doesn't.
+
+### 7. Llama Models — Strikingly Weak
+
+Llama 3.3 70B at 8%, Maverick at 0%. These are large models that perform well on standard benchmarks. Their failure here suggests Meta's training pipeline doesn't emphasize the kind of abstract pattern induction STS requires. Compare to GLM-5 at 67% — a less-discussed model that crushes this task. The benchmark is revealing something about training methodology that standard evals miss.
+
+### 8. GLM-5 as the Leader — A Surprise
+
+If this holds at scale, "GLM-5 outperforms GPT-5.3 and Claude Opus on novel in-context rule induction" is an attention-grabbing finding. It suggests the Zhipu/GLM training approach develops stronger in-context learning abilities, at least on this kind of task.
+
+### 9. Statistical Caveats
+
+- With 15 items per cell (3 instances x 5 items), CIs are roughly +/-20%. The ranking is directional, not definitive.
+- The DeepSeek-R1 and Qwen-3-Coder anomalies (getting WORSE with more examples) are probably noise at this sample size.
+- GLM-5 at 67% vs Claude Opus at 42% — the true values might be closer. SB2 production runs with 25 instances will provide definitive rankings.
+
+---
+
+## SB2 Pilot Model Selection (8 models)
+
+Each model earns its slot by testing a specific hypothesis:
+
+| Model | T2N8 | Why Include |
+|-------|------|-------------|
+| GLM-5 | 67% | Highest performer — ceiling reference |
+| GPT-5.3-Codex | 58% | Code hypothesis H2 (compare to Chat) |
+| GPT-5.3-Chat | 50% | Code hypothesis H2 (compare to Codex) |
+| Gemini-3.1-Flash* | — | Kaggle SDK model, Google judge appeal. Use Flash instead of Pro to avoid reasoning token cost blowup |
+| Claude-Sonnet-4.6 | 42% | Different architecture family |
+| DeepSeek-R1 | 33% | Reasoning-trained model hypothesis H3 |
+| DeepSeek-V3.2 | 33% | Same family, NOT reasoning-trained (control for R1) |
+| Claude-Haiku-4.5 | 33% | Scale comparison within Claude family |
+
+**Deferred:** Grok (incomplete data), Flash-Lite (too low for meaningful feedback signal), Kimi and MiniMax (interesting but don't test unique hypotheses), Qwen-3-Coder local (anomalous). Can add back for production if pilot reveals something worth chasing.
+
+*Note: Gemini-3.1-Pro used >50% of total run cost in SB1 due to long reasoning traces. Flash provides a Gemini architecture test at manageable cost.
+
+---
+
+## Early Pilot Results (2026-03-18) — Preserved for Reference
+
+### SB2 Feedback Pilot (Gemini 3 Flash, 3 instances, T2 N=8)
 
 | Turn | correction | practice_only | error_only |
 |------|-----------|--------------|------------|
@@ -67,232 +126,67 @@
 | 7 | 67% | 33% | 33% |
 | **Avg** | **38%** | **42%** | **42%** |
 
-#### Qwen3.5-35B-A3B (nothink)
+**Directional observation:** All three feedback conditions converge to ~40%. FLR appears near zero, but N=3 instances (24 obs/condition) is far too small to confirm. The 8-model SB2 pilot will test this with more statistical power.
 
-| Turn | correction | practice_only | error_only |
-|------|-----------|--------------|------------|
-| 0 | 0% | 0% | 0% |
-| 1 | 67% | 33% | 33% |
-| 2 | 0% | 0% | 0% |
-| 3 | 0% | 0% | 0% |
-| 4 | 33% | 0% | 0% |
-| 5 | 0% | 0% | 0% |
-| 6 | 0% | 0% | 0% |
-| 7 | 0% | 33% | 0% |
-| **Avg** | **12%** | **8%** | **4%** |
-
-#### Nemotron Nano (nothink)
-- **0% across all conditions, all turns.** Complete floor effect.
+### Thinking Mode Failure in Small MoE Models
+- Qwen3.5-35B-A3B and Nemotron Nano (3B active params) enter infinite reasoning loops on STS tasks
+- Burns 4096+ tokens on hypothesis-revision without concluding
+- Works fine in nothink mode (fast, wrong answers, but extractable)
+- STS tasks expose a thinking-mode failure mode in small-active-param MoE models that wouldn't surface on typical benchmarks
 
 ---
 
-## Key Findings
+## Infrastructure Fixes Applied (v1.5.0)
 
-### 1. Difficulty Gradient Works
-The benchmark discriminates across model capability levels:
-- **Gemini Flash** (API, thinking): T1=87%, T2=38%, T3=11%
-- **Qwen 35B-A3B** (local, nothink): T1=44%, T2=8%, T3=5%
-- **Nemotron Nano** (local, nothink): 0% everywhere (complete floor effect — cannot engage with STS at all)
-- **Caveat:** Discrimination here is primarily between model scale tiers (frontier API vs. 3B-active local vs. hybrid architecture), not between cognitive profiles. The more interesting discrimination (feedback type effects, strategy differences) requires the full production dataset.
-
-### 2. Thinking Mode Creates Infinite Reasoning Loops on STS
-Both local MoE models (3B active params) get stuck in unbounded reasoning when thinking is enabled:
-- Qwen3.5-35B-A3B: 4096+ reasoning tokens without concluding, content always empty
-- Nemotron Nano: Same behavior — 13K+ chars of reasoning, never produces answer
-- These models try to inductively figure out the STS rules from examples, get stuck analyzing edge cases, and exhaust the token budget
-- **Implication**: MoE models with 3B active params lack the reasoning capacity for in-context rule induction at the STS difficulty level. They need to be tested in nothink mode.
-- **Interesting contrast**: Gemini Flash (with MEDIUM thinking) succeeds because it has much more compute per token and its thinking is bounded
-- **Note**: This is itself a finding worth reporting — STS tasks expose a thinking-mode failure mode in small-active-param MoE models that wouldn't surface on typical benchmarks
-
-### 3. FLR ≈ 0 Directionally Observed (Pilot — Not Yet Confirmed)
-For Gemini Flash (the only model with enough accuracy to measure):
-- correction: 38% (~9/24), practice_only: 42% (~10/24), error_only: 42% (~10/24)
-- All three conditions converge to ~40% accuracy
-- The difference between 38% and 42% is ~1 item out of 24 — well within noise (95% CI for 9/24 ≈ [19%, 59%])
-- **Directional observation:** feedback type appears not to matter, but this pilot cannot confirm or reject FLR ≈ 0. The 25-instance production run (300 observations per condition) is needed for statistical power.
-- **Open question — SB2 baseline gap:** SB1 T2 N=8 accuracy is 50%, but SB2 correction averages only 38% at the same tier/N. The multi-turn format may itself degrade performance (context pollution from the model's own wrong answers, format overhead, or harder STS instances in the pilot set). This gap needs investigation before interpreting feedback effects.
-
-For Qwen (lower accuracy):
-- correction: 12%, practice_only: 8%, error_only: 4%
-- Too close to floor for meaningful FLR calculation, but directionally consistent
-- With ~3/24, ~2/24, ~1/24 correct, these are effectively indistinguishable from noise
-
-### 4. N=8 Helps at T1-T2 for Flash but Not for Weaker Models
-- Gemini Flash: T2 N=4→N=8 doubles accuracy (25%→50%)
-- Qwen3.5-35B-A3B: T2 stays at 8% regardless of N — more examples don't help
-- **Note on information vs. capacity:** The "informative example" design guarantees all rules are exercised even at N=4, so the N=4→N=8 improvement reflects the model's ability to use *redundant* evidence (more diverse inputs per rule), not just seeing more rules. This is a genuine measure of learning capacity — a model that can already induce the rule from N=4 doesn't need the redundancy.
-- **Interpretation**: Qwen at 3B active params likely lacks the capacity to induce positional rules from any number of in-context examples. The N effect is a measure of learning capacity itself — but only above the minimum capability threshold. Models at floor (Nemotron, Qwen at T2+) don't benefit from more examples because they can't engage with the task, not necessarily because they "can't learn."
-
-### 5. 25-Instance Dataset Ready for Production
-- 25 STS instances at Tier 2 generated and validated
-- 100% Type E feasibility (all instances have extrapolation items)
-- 0% Type L items (expected at Tier 2 — no exceptions, simple rules)
-- 12 SB2 turns per instance (all achieved target)
-- 125 total SB1 test items (100R + 25E)
+- **max_tokens**: 20,000 for OpenRouter (thinking models need headroom), 2,048 for LM Studio (constrained by local context window).
+- **Empty-response fallback**: `prompt_json()` can return empty string when JSON schema mode fails silently. Added `if not raw_response.strip()` check -> falls back to plain `prompt()` in both `pilot.py` and `sb2_pilot.py`.
+- **JSON schema compatibility caching**: OpenRouter models that don't support `json_schema` response format (GPT-5.3, MiniMax) are remembered in `_json_schema_unsupported` set — fallback fires once per model per process, then skips silently.
+- **Log pruning race condition**: Fixed `_prune_logs()` in `interaction_log.py` — concurrent threads could crash when a file was deleted between `glob()` and `stat()`.
+- **Unicode console fix**: Added `_safe_print()` in `pilot.py` for Windows cp1252 terminals that can't encode STS symbols.
 
 ---
 
-## Thinking Mode Observations
+## STS Generator Notes
 
-### MoE Models with 3B Active Params (Qwen3.5-35B-A3B, Nemotron Nano)
-- **With thinking ON**: Model enters analysis paralysis on STS tasks
-  - Burns 4096+ tokens on reasoning
-  - Tries to inductively figure out transformation rules from examples
-  - Gets stuck in hypothesis-revision loops ("Wait, maybe the rule is...", "Actually, let me reconsider...")
-  - Never concludes and produces an answer
-  - finish_reason always "length" (hit token limit)
-- **With thinking OFF**: Model produces answers quickly (~16 tokens)
-  - Answers are usually wrong (0-47% depending on tier)
-  - But extraction pipeline works cleanly
-  - Practical for benchmarking
+### Training Set Quality
+- Informative example generation ensures all rules are exercised even at N=4
+- 0% identity examples at all tiers
+- N=4->N=8 improvement reflects ability to use redundant evidence, not just seeing more rules
 
-### Gemini Flash (MEDIUM thinking, API)
-- Thinking works correctly — model reasons briefly and produces answers
-- 87% accuracy at T1 shows genuine rule induction capability
-- Thinking tokens are bounded (doesn't exhaust budget)
+### Type E Feasibility
+- Tier 2: 82% (slightly below 90% target)
+- Tier 3: 90%
+- Tier 4: 100%
+- 25-instance T2 dataset: 100% feasibility (all instances have extrapolation items)
 
 ---
 
-## Model Behavior Observations
+## Open Questions for SB2
 
-### Qwen3.5-35B-A3B (nothink)
-- Produces valid JSON responses: `{"output": "⧫⟐⧫⟐"}`
-- Fast inference (~0.7s per item without thinking)
-- Answers are plausible (valid symbols, correct length) but wrong
-- T1 accuracy (40-47%) suggests partial pattern matching — it picks up simple direct replacements sometimes but misses multi-rule interactions
-- T2+ accuracy near floor (8%) — can't handle positional rules
-
-### Nemotron Nano (nothink, MLX)
-- Hybrid Mamba-Transformer architecture (NemotronH)
-- Served via mlx_lm.server on MLX (Apple Silicon native)
-- Produces valid JSON but answers are nearly random
-- Complete failure on STS suggests architecture is not suited for in-context rule induction
-- The `reasoning` field (not `reasoning_content`) requires special handling in extraction code
+1. **Does FLR ~ 0 hold across 8 models?** The Gemini Flash pilot (1 model, 3 instances) is suggestive but not confirmatory. The 8-model SB2 pilot will test with statistical power across model families.
+2. **Which component of feedback matters?** The 2x2 factorial (correction vs practice_only vs error_only vs no_feedback) decomposes whether models benefit from the error signal, the correct answer, or neither.
+3. **Does code training predict feedback responsiveness?** GPT-5.3-Codex vs Chat is a clean within-family test of Hypothesis 2.
+4. **Does reasoning training help or hurt?** DeepSeek-R1 vs V3.2 at the same T2N8 accuracy (33%) provides a natural pair for Hypothesis 3.
+5. **SB2 baseline gap**: Gemini Flash pilot showed SB1 T2N8=50% but SB2 correction avg=38%. The no-feedback condition will isolate whether multi-turn format itself degrades performance.
+6. **Does the R1 overthinking anomaly replicate?** T1N8 regression needs more instances to confirm or dismiss.
 
 ---
 
-## Answer Extraction Observations
+## Cost & Infrastructure
 
-### 2026-03-18: Initial testing
-- Regex extraction handles: "Output: X", "<think>...</think>Output: X", bare symbol sequences
-- Added patterns for: "The output is X", "Answer: X", "Result: X"
-- JSON extraction works for `{"output": "..."}` format
+### API Costs (approximate)
+- 2026-03-18: ~600 Gemini Flash calls (<$0.05)
+- 2026-03-19: ~19 models x 60 items x 2 calls (prompt_json + fallback) ~ 2,280 OpenRouter calls, estimated <$10 total
+- SB2 pilot (8 models, 3 instances, 4 conditions, 8 turns): estimated $15-20 on OpenRouter
+- SB2 production (5-6 models, 25 instances): estimated $50-100 on OpenRouter
 
-### 2026-03-18: Extraction pipeline overhaul
-- Structured JSON output as primary extraction
-- Truncated JSON recovery for thinking-budget-exhausted responses
-- Symbol-aware extraction as fallback
-- Answer normalization
-- Vocabulary listing in prompts
+### Local Setup (RTX 5090 32GB via LM Studio)
+- Qwen-3-Coder-30B-A3B: Works, 17% T2N8, 7-12s per model scan
+- Qwen-3-1.7B: Works, 8% T2N8 (too weak for SB2)
+- Qwen-3.5-27B: Context too small for thinking, needs 8K+ context in LM Studio
+- GLM-4.7-Flash: Same context issue, all empty responses
 
-### 2026-03-18: Cross-model extraction
-- **Gemini Flash**: Clean JSON extraction, 100% success rate
-- **Qwen3.5-35B-A3B nothink**: Clean JSON, ~100% success
-- **Qwen3.5-35B-A3B think**: Content always empty (reasoning exhausts budget). UNUSABLE.
-- **Nemotron nothink**: Clean JSON with occasional `</think>` artifacts, extraction handles it
-- **Nemotron think**: Reasoning field only, content empty. UNUSABLE.
-
----
-
-## Difficulty Calibration
-
-### 2026-03-18: Multi-model calibration
-- **T2 N=8 selected as SB2 operating point** for Gemini Flash (~50% SB1 accuracy, ~38% in multi-turn SB2 pilot)
-- T2 N=8 is too hard for Qwen3.5-35B-A3B (~8%) — creates floor effect
-- The ideal tier for cross-model SB2 depends on the weakest model you want to include
-- For the Kaggle submission: T2 N=8 is appropriate for Gemini-class models. Report the floor effects for weaker models as additional findings.
-- **Open question**: The ~12-point drop from SB1 (50%) to SB2 (38%) at the same tier/N needs investigation. If multi-turn format inherently degrades accuracy, the operating point may need recalibration.
-
----
-
-## Infrastructure Notes
-
-### llama.cpp setup
-- Binary at `llama.cpp/build/bin/llama-server`
-- Rpath needed fixing: `install_name_tool -rpath` to update library search path
-- Launch flags: `--jinja --reasoning-format deepseek --port 8082 --ctx-size 8192 --n-gpu-layers 99 --flash-attn on`
-- `--flash-attn` requires explicit `on` value (not just the flag)
-
-### mlx_lm setup (Nemotron)
-- Installed via Python 3.13 venv at `/tmp/mlx_venv/`
-- Uses `mlx_lm server` (not deprecated `mlx_lm.server`)
-- Model: `~/.lmstudio/models/lmstudio-community/NVIDIA-Nemotron-3-Nano-30B-A3B-MLX-4bit`
-- Model name in API: `default_model` (omit model field or use this)
-- Supports `extra_body.chat_template_kwargs.enable_thinking` for thinking control
-- Reasoning field is `reasoning` (not `reasoning_content`)
-
-### Memory usage (M4 Pro 48GB)
-- Qwen3.5-27B (Q4_K_M): ~16GB
-- Qwen3.5-35B-A3B (Q4_K_M): ~20GB
-- Nemotron Nano (MLX 4-bit): ~12.4GB loaded
-- Can run 27B + 35B-A3B simultaneously (~36GB)
-- Cannot add Nemotron without shutting one down
-
----
-
-## Key Decisions & Pivots
-
-### 2026-03-18
-1. **Gemini model versions**: Must use gemini-3-flash-preview and gemini-3.1-pro-preview (2.0 deprecated)
-2. **Training set overhaul**: Added informative example generation
-3. **Retry logic**: Gemini client (5 retries, exponential backoff)
-
-### 2026-03-18 Evening
-1. **MoE thinking mode disabled**: Both Qwen3.5-35B-A3B and Nemotron Nano get stuck in infinite reasoning loops on STS. Must use nothink variants.
-2. **max_tokens tuning**: Default 512-1024 is insufficient for thinking models. Set to 8192 for thinking, 512 for nothink.
-3. **Nemotron served via MLX**: No GGUF available for this hybrid Mamba-Transformer architecture. mlx_lm.server works but requires Python 3.13 venv.
-4. **FLR ≈ 0 directionally observed**: All three feedback conditions converge to ~40% for Gemini Flash in pilot (3 instances, 24 obs/condition). Suggestive but far too few observations to confirm. Needs 25-instance production run.
-
----
-
-## Cost Tracking
-
-### 2026-03-18
-- Gemini API calls: ~15 initial + ~200 calibration
-- Post-fix eval: ~200 calls
-
-### 2026-03-18 Evening
-- Gemini Flash: ~160 API calls (90 SB1 + 48 SB2 main + 24 SB2 error_only)
-- Qwen3.5-35B-A3B: ~160 local calls (similar breakdown)
-- Nemotron Nano: ~160 local calls (similar breakdown)
-- Total API cost: <$0.05 (Gemini Flash is very cheap)
-- Local compute: ~20 min for nothink models, unusable for thinking mode
-
----
-
-## Priority 3: 25-Instance Dataset Generated
-
-- Tier: 2
-- Instances: 25
-- Avg rules/instance: 3.0
-- SB1 items: 100R + 25E + 0L = 125
-- SB2 turns per instance: 12 (all achieved)
-- Type E feasibility: 25/25 (100%)
-- Saved to: `results/priorities_20260318_194841/dataset_t2_25inst/dataset.json`
-
----
-
-## Known Gaps & Open Questions (Pre-Production)
-
-### Statistical
-1. **All SB2 results are from a 3-instance pilot.** Claims about FLR, condition effects, or trajectory patterns require the 25-instance production run (300 obs/condition) before they carry weight.
-2. **Type E/L cell sizes (N=3) make RII/HTR meaningless.** Strategy decomposition analysis must wait for production data.
-3. **Confidence intervals should accompany all reported percentages** in the production writeup. Point estimates from small samples are misleading.
-
-### Design
-4. **SB2 < SB1 baseline gap is unexplained.** Gemini Flash scores 50% at T2 N=8 in single-prompt SB1 but only 38% in multi-turn SB2 correction (same tier, same starting N). Possible causes: context pollution from wrong answers, multi-turn format overhead, or harder STS instances in the pilot. Must be investigated — if the format itself degrades accuracy, feedback effects are confounded with format effects.
-   - **v11.0 STATUS: ADDRESSED.** Three new conditions target this directly: **no-feedback** (multi-turn, "Next question." only — isolates format effect), **clean-context** (correct pairs as clean examples, wrong answers stripped — tests context pollution), and **SB1 at N=16/N=32** (provides learning curve comparison). Run on existing 3 pilot instances first (24 API calls, trivial cost).
-5. **Missing multi-turn no-feedback baseline.** The 2×2 factorial's "not evaluated, no answer" cell uses SB1 (single-prompt), which is a different format.
-   - **v11.0 STATUS: ADDRESSED.** No-feedback condition added as 4th core condition. True 2×2 with all cells in same multi-turn format.
-6. **Only one model above floor for SB2.** Gemini Flash is the only model with enough T2 accuracy to measure feedback effects. The cognitive profiling story (2D map, radar chart) needs multiple models above floor. The production run on Kaggle SDK models (Gemini Pro, larger Qwen, etc.) should address this.
-   - **v11.0 STATUS: ADDRESSED.** Expanded to 15-20 models via OpenRouter. Two-phase selection: broad SB1 scan filters for models in 15-70% accuracy range.
-
-### Interpretive
-7. **In correction and practice_only conditions, each turn adds a correct input→output pair to context.** After 8 turns, the model effectively has N≈16. The SB2 accuracy should be compared to SB1 N=16 (currently not tested) to determine whether SB2 is showing anything beyond the SB1 learning curve extended by more examples.
-   - **v11.0 STATUS: ADDRESSED.** SB1 at N=16 and N=32 will be run on existing T2 instances. Clean-context at Turn 8 is functionally equivalent to SB1 N=16 — validates the comparison.
-8. **Nemotron at 0% tells us about minimum capability thresholds, not about learning.** Worth reporting as a finding about task engagement floors, but should not be framed as evidence about cognitive profiles or feedback responsiveness.
-
-### v11.0 New Questions
-9. **Code-training hypothesis untested.** Do code-tuned models (DeepSeek-Coder-V2, Codestral) show higher FLR than chat-tuned counterparts? This is the most exciting hypothesis — if confirmed, feedback blindness is a training data gap, not an architectural limitation.
-10. **Mechanistic probes are pilot-only.** Clean-context, prompted-correction, structured-correction, and reformatted-correction run on 3-5 instances on 2-3 models. If they show clear signal, consider expanding. If not, they still provide evidence about WHY FLR ≈ 0.
-11. **OpenRouter rate limiting and availability.** Need rate-limited client with exponential backoff. Some models may be unavailable or have long queue times.
+### Results Saved
+- `results/production_20260319_004154/` — first OpenRouter run (Claude, GPT-5.4-Mini, DeepSeek-V3.2, Gemini-Flash-Lite, Grok, Llama models)
+- `results/rescan_or_v2/` — OpenRouter re-scan (GPT-5.3-Chat/Codex, GLM-5, MiniMax, Gemini-Pro, Kimi, Qwen-397B, DeepSeek-R1)
+- `results/rescan_local_v3/` — Local LM Studio re-scan (5 models)

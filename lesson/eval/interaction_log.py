@@ -33,8 +33,16 @@ def _prune_logs(log_dir: Path, max_keep: int = MAX_LOGS) -> None:
     if not log_dir.exists():
         return
 
-    # Find all .jsonl log files
-    log_files = sorted(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    # Find all .jsonl log files (handle race condition where files are
+    # deleted between glob() and stat() by concurrent threads)
+    def _safe_mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except FileNotFoundError:
+            return 0.0
+
+    log_files = sorted(log_dir.glob("*.jsonl"), key=_safe_mtime)
+    log_files = [p for p in log_files if p.exists()]
 
     while len(log_files) > max_keep:
         oldest = log_files.pop(0)

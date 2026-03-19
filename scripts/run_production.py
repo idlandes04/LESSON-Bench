@@ -26,9 +26,11 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -130,6 +132,7 @@ def run_scan(
     models: List[Tuple[str, str]],
     results_dir: Path,
     n_instances: int = 3,
+    max_parallel: int = 1,
 ) -> Dict[str, Any]:
     """Phase 1: Run SB1 on all models to map accuracy landscape.
 
@@ -137,6 +140,7 @@ def run_scan(
         models:      List of (provider, model_name) pairs.
         results_dir: Directory to save results.
         n_instances: Number of STS instances per cell.
+        max_parallel: Max parallel models to evaluate (1 = sequential).
 
     Returns:
         Dict mapping model_name -> result dict.
@@ -144,11 +148,13 @@ def run_scan(
     from lesson.eval.pilot import run_sb1_pilot
 
     all_results: Dict[str, Any] = {}
+    lock = threading.Lock()
 
-    for idx, (provider, model_name) in enumerate(models, 1):
-        print(f"\n{'=' * 60}")
-        print(f"SCAN [{idx}/{len(models)}] {provider}:{model_name}")
-        print(f"{'=' * 60}")
+    def _scan_one(idx, provider, model_name):
+        with lock:
+            print(f"\n{'=' * 60}")
+            print(f"SCAN [{idx}/{len(models)}] {provider}:{model_name}")
+            print(f"{'=' * 60}")
 
         t0 = time.time()
         try:
@@ -167,21 +173,38 @@ def run_scan(
                 "sb1": sb1,
                 "elapsed_s": elapsed,
             }
-            all_results[model_name] = result
-            print(f"\n  SB1 scan done in {elapsed:.1f}s")
+            with lock:
+                all_results[model_name] = result
+                print(f"\n  SB1 scan done in {elapsed:.1f}s")
         except Exception as e:
             elapsed = time.time() - t0
-            print(f"\n  SB1 scan FAILED in {elapsed:.1f}s: {e}")
-            import traceback; traceback.print_exc()
-            all_results[model_name] = {
-                "model": model_name,
-                "provider": provider,
-                "sb1_error": str(e),
-                "elapsed_s": elapsed,
-            }
+            with lock:
+                print(f"\n  SB1 scan FAILED in {elapsed:.1f}s: {e}")
+                import traceback; traceback.print_exc()
+                all_results[model_name] = {
+                    "model": model_name,
+                    "provider": provider,
+                    "sb1_error": str(e),
+                    "elapsed_s": elapsed,
+                }
 
         # Save incrementally
         _save(results_dir, model_name, "scan", all_results[model_name])
+
+    if max_parallel <= 1:
+        # Sequential (existing behavior)
+        for idx, (provider, model_name) in enumerate(models, 1):
+            _scan_one(idx, provider, model_name)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = []
+            for idx, (provider, model_name) in enumerate(models, 1):
+                futures.append(pool.submit(_scan_one, idx, provider, model_name))
+            concurrent.futures.wait(futures)
+            # Re-raise any exceptions
+            for f in futures:
+                if f.exception():
+                    print(f"WARNING: A model scan failed: {f.exception()}")
 
     # Save combined scan results
     combined_path = results_dir / "scan_combined.json"
@@ -288,6 +311,7 @@ def run_deep(
     n_instances: int = 3,
     n_turns: int = 12,
     tier: int = 2,
+    max_parallel: int = 1,
 ) -> Dict[str, Any]:
     """Phase 2: Run full SB2 on filtered models.
 
@@ -297,6 +321,7 @@ def run_deep(
         n_instances: Number of STS instances per condition.
         n_turns:     Number of SB2 turns per instance.
         tier:        STS tier.
+        max_parallel: Max parallel models to evaluate (1 = sequential).
 
     Returns:
         Dict mapping model_name -> result dict.
@@ -305,11 +330,13 @@ def run_deep(
 
     conditions = ["correction", "practice_only", "error_only", "no_feedback"]
     all_results: Dict[str, Any] = {}
+    lock = threading.Lock()
 
-    for idx, (provider, model_name) in enumerate(models, 1):
-        print(f"\n{'=' * 60}")
-        print(f"DEEP [{idx}/{len(models)}] {provider}:{model_name}")
-        print(f"{'=' * 60}")
+    def _deep_one(idx, provider, model_name):
+        with lock:
+            print(f"\n{'=' * 60}")
+            print(f"DEEP [{idx}/{len(models)}] {provider}:{model_name}")
+            print(f"{'=' * 60}")
 
         model_results: Dict[str, Any] = {
             "model": model_name,
@@ -317,8 +344,9 @@ def run_deep(
         }
 
         for condition in conditions:
-            print(f"\n--- SB2: {condition} (T{tier}, N=8, {n_turns} turns, "
-                  f"{n_instances} instances) ---")
+            with lock:
+                print(f"\n--- SB2: {condition} (T{tier}, N=8, {n_turns} turns, "
+                      f"{n_instances} instances) ---")
             t0 = time.time()
             try:
                 client = get_client(provider, model_name)
@@ -333,20 +361,38 @@ def run_deep(
                 elapsed = time.time() - t0
                 model_results[f"sb2_{condition}"] = sb2
                 model_results[f"sb2_{condition}_elapsed_s"] = elapsed
-                print(f"\n  SB2 {condition} done in {elapsed:.1f}s")
+                with lock:
+                    print(f"\n  SB2 {condition} done in {elapsed:.1f}s")
             except Exception as e:
                 elapsed = time.time() - t0
-                print(f"\n  SB2 {condition} FAILED in {elapsed:.1f}s: {e}")
-                import traceback; traceback.print_exc()
+                with lock:
+                    print(f"\n  SB2 {condition} FAILED in {elapsed:.1f}s: {e}")
+                    import traceback; traceback.print_exc()
                 model_results[f"sb2_{condition}_error"] = str(e)
                 model_results[f"sb2_{condition}_elapsed_s"] = elapsed
 
             # Save incrementally after each condition
             _save(results_dir, model_name, f"deep_{condition}", model_results)
 
-        all_results[model_name] = model_results
+        with lock:
+            all_results[model_name] = model_results
         # Save full model result
         _save(results_dir, model_name, "deep_all", model_results)
+
+    if max_parallel <= 1:
+        # Sequential (existing behavior)
+        for idx, (provider, model_name) in enumerate(models, 1):
+            _deep_one(idx, provider, model_name)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = []
+            for idx, (provider, model_name) in enumerate(models, 1):
+                futures.append(pool.submit(_deep_one, idx, provider, model_name))
+            concurrent.futures.wait(futures)
+            # Re-raise any exceptions
+            for f in futures:
+                if f.exception():
+                    print(f"WARNING: A model deep eval failed: {f.exception()}")
 
     # Save combined
     combined_path = results_dir / "deep_combined.json"
@@ -456,6 +502,7 @@ def run_extended_sb1(
     results_dir: Path,
     n_instances: int = 3,
     tier: int = 2,
+    max_parallel: int = 1,
 ) -> Dict[str, Any]:
     """Phase 3: Run SB1 with extended N values [4, 8, 16, 32] on specified models.
 
@@ -464,6 +511,7 @@ def run_extended_sb1(
         results_dir: Directory to save results.
         n_instances: Number of STS instances per cell.
         tier:        STS tier (default 2).
+        max_parallel: Max parallel models to evaluate (1 = sequential).
 
     Returns:
         Dict mapping model_name -> result dict.
@@ -471,11 +519,13 @@ def run_extended_sb1(
     from lesson.eval.pilot import run_sb1_pilot
 
     all_results: Dict[str, Any] = {}
+    lock = threading.Lock()
 
-    for idx, (provider, model_name) in enumerate(models, 1):
-        print(f"\n{'=' * 60}")
-        print(f"EXTENDED-SB1 [{idx}/{len(models)}] {provider}:{model_name}")
-        print(f"{'=' * 60}")
+    def _extended_one(idx, provider, model_name):
+        with lock:
+            print(f"\n{'=' * 60}")
+            print(f"EXTENDED-SB1 [{idx}/{len(models)}] {provider}:{model_name}")
+            print(f"{'=' * 60}")
 
         t0 = time.time()
         try:
@@ -494,20 +544,37 @@ def run_extended_sb1(
                 "sb1_extended": sb1,
                 "elapsed_s": elapsed,
             }
-            all_results[model_name] = result
-            print(f"\n  Extended SB1 done in {elapsed:.1f}s")
+            with lock:
+                all_results[model_name] = result
+                print(f"\n  Extended SB1 done in {elapsed:.1f}s")
         except Exception as e:
             elapsed = time.time() - t0
-            print(f"\n  Extended SB1 FAILED in {elapsed:.1f}s: {e}")
-            import traceback; traceback.print_exc()
-            all_results[model_name] = {
-                "model": model_name,
-                "provider": provider,
-                "sb1_extended_error": str(e),
-                "elapsed_s": elapsed,
-            }
+            with lock:
+                print(f"\n  Extended SB1 FAILED in {elapsed:.1f}s: {e}")
+                import traceback; traceback.print_exc()
+                all_results[model_name] = {
+                    "model": model_name,
+                    "provider": provider,
+                    "sb1_extended_error": str(e),
+                    "elapsed_s": elapsed,
+                }
 
         _save(results_dir, model_name, "extended_sb1", all_results[model_name])
+
+    if max_parallel <= 1:
+        # Sequential (existing behavior)
+        for idx, (provider, model_name) in enumerate(models, 1):
+            _extended_one(idx, provider, model_name)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = []
+            for idx, (provider, model_name) in enumerate(models, 1):
+                futures.append(pool.submit(_extended_one, idx, provider, model_name))
+            concurrent.futures.wait(futures)
+            # Re-raise any exceptions
+            for f in futures:
+                if f.exception():
+                    print(f"WARNING: A model extended-sb1 eval failed: {f.exception()}")
 
     # Save combined
     combined_path = results_dir / "extended_sb1_combined.json"
@@ -555,6 +622,7 @@ def run_probes(
     n_instances: int = 3,
     n_turns: int = 12,
     tier: int = 2,
+    max_parallel: int = 1,
 ) -> Dict[str, Any]:
     """Phase 4: Run SB2 with mechanistic probe conditions.
 
@@ -567,6 +635,7 @@ def run_probes(
         n_instances: Number of STS instances per condition.
         n_turns:     Number of SB2 turns per instance.
         tier:        STS tier.
+        max_parallel: Max parallel models to evaluate (1 = sequential).
 
     Returns:
         Dict mapping model_name -> result dict.
@@ -580,11 +649,13 @@ def run_probes(
         "reformatted_correction",
     ]
     all_results: Dict[str, Any] = {}
+    lock = threading.Lock()
 
-    for idx, (provider, model_name) in enumerate(models, 1):
-        print(f"\n{'=' * 60}")
-        print(f"PROBES [{idx}/{len(models)}] {provider}:{model_name}")
-        print(f"{'=' * 60}")
+    def _probes_one(idx, provider, model_name):
+        with lock:
+            print(f"\n{'=' * 60}")
+            print(f"PROBES [{idx}/{len(models)}] {provider}:{model_name}")
+            print(f"{'=' * 60}")
 
         model_results: Dict[str, Any] = {
             "model": model_name,
@@ -592,8 +663,9 @@ def run_probes(
         }
 
         for condition in probe_conditions:
-            print(f"\n--- Probe: {condition} (T{tier}, N=8, {n_turns} turns, "
-                  f"{n_instances} instances) ---")
+            with lock:
+                print(f"\n--- Probe: {condition} (T{tier}, N=8, {n_turns} turns, "
+                      f"{n_instances} instances) ---")
             t0 = time.time()
             try:
                 client = get_client(provider, model_name)
@@ -608,19 +680,37 @@ def run_probes(
                 elapsed = time.time() - t0
                 model_results[f"probe_{condition}"] = sb2
                 model_results[f"probe_{condition}_elapsed_s"] = elapsed
-                print(f"\n  Probe {condition} done in {elapsed:.1f}s")
+                with lock:
+                    print(f"\n  Probe {condition} done in {elapsed:.1f}s")
             except Exception as e:
                 elapsed = time.time() - t0
-                print(f"\n  Probe {condition} FAILED in {elapsed:.1f}s: {e}")
-                import traceback; traceback.print_exc()
+                with lock:
+                    print(f"\n  Probe {condition} FAILED in {elapsed:.1f}s: {e}")
+                    import traceback; traceback.print_exc()
                 model_results[f"probe_{condition}_error"] = str(e)
                 model_results[f"probe_{condition}_elapsed_s"] = elapsed
 
             # Save incrementally after each condition
             _save(results_dir, model_name, f"probe_{condition}", model_results)
 
-        all_results[model_name] = model_results
+        with lock:
+            all_results[model_name] = model_results
         _save(results_dir, model_name, "probes_all", model_results)
+
+    if max_parallel <= 1:
+        # Sequential (existing behavior)
+        for idx, (provider, model_name) in enumerate(models, 1):
+            _probes_one(idx, provider, model_name)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            futures = []
+            for idx, (provider, model_name) in enumerate(models, 1):
+                futures.append(pool.submit(_probes_one, idx, provider, model_name))
+            concurrent.futures.wait(futures)
+            # Re-raise any exceptions
+            for f in futures:
+                if f.exception():
+                    print(f"WARNING: A model probes eval failed: {f.exception()}")
 
     # Save combined
     combined_path = results_dir / "probes_combined.json"
@@ -827,6 +917,12 @@ def main():
         default=None,
         help="Override results directory.",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Max parallel models to evaluate simultaneously (default 1 = sequential).",
+    )
     args = parser.parse_args()
 
     # Set up results directory
@@ -867,7 +963,7 @@ def main():
         if not models:
             print("ERROR: No models available for scan!")
             sys.exit(1)
-        run_scan(models, results_dir, n_instances=args.n_instances)
+        run_scan(models, results_dir, n_instances=args.n_instances, max_parallel=args.parallel)
 
     elif args.phase == "deep":
         # Load models from scan results or --models flag
@@ -888,6 +984,7 @@ def main():
             n_instances=args.n_instances,
             n_turns=args.n_turns,
             tier=args.tier,
+            max_parallel=args.parallel,
         )
 
     elif args.phase == "both":
@@ -899,7 +996,7 @@ def main():
 
         scan_dir = results_dir / "scan"
         scan_dir.mkdir(parents=True, exist_ok=True)
-        run_scan(scan_models, scan_dir, n_instances=args.n_instances)
+        run_scan(scan_models, scan_dir, n_instances=args.n_instances, max_parallel=args.parallel)
 
         # Phase 2: Deep — load filtered models from scan
         deep_models = load_filtered_models(str(scan_dir))
@@ -913,6 +1010,7 @@ def main():
                 n_instances=args.n_instances,
                 n_turns=args.n_turns,
                 tier=args.tier,
+                max_parallel=args.parallel,
             )
 
     elif args.phase == "extended-sb1":
@@ -924,6 +1022,7 @@ def main():
             models, results_dir,
             n_instances=args.n_instances,
             tier=args.tier,
+            max_parallel=args.parallel,
         )
 
     elif args.phase == "probes":
@@ -939,6 +1038,7 @@ def main():
             n_instances=args.n_instances,
             n_turns=args.n_turns,
             tier=args.tier,
+            max_parallel=args.parallel,
         )
 
     elapsed = time.time() - phase_start

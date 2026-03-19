@@ -179,9 +179,9 @@ answer = response.output.strip()
 
 **Why output-only, no reasoning field:** Adding a `reasoning: str` field forces chain-of-thought on all models, changing the cognitive task being measured. A model that naturally gives terse answers becomes a "deliberate reasoner" because the schema requires it. This confounds both accuracy and strategy decomposition. Thinking traces are collected naturally from models that produce them (Qwen3 thinking mode) — not forced via schema.
 
-**Tier 2 — JSON Mode (local models via llama.cpp):**
+**Tier 2 — JSON Mode (local models via LM Studio / llama.cpp):**
 
-Most llama.cpp servers support `response_format={"type": "json_object"}`. Prompt the model to respond with `{"output": "..."}` and parse the JSON.
+LM Studio and llama.cpp servers support `response_format={"type": "json_schema"}`. Prompt the model to respond with `{"output": "..."}` and parse the JSON.
 
 ```python
 def local_model_extract(text: str) -> str:
@@ -799,26 +799,21 @@ This finding is NOT a flaw — it's an additional finding about how multi-turn c
 
 *v11.0: Added no-feedback as 4th core condition. Extended to 12 turns. Added 4 mechanistic probe conditions. SB1 extended with N=16/N=32 for key models. Total items vary by model tier (core models get full battery, broad-scan models get SB1 only).*
 
-**Budget math (v11.0 — expanded model count):**
-- Kaggle SDK (4 models): ~3,075 items × 4 models × ~$0.03 = ~$369
-- Structured output overhead (schema in prompt): ~$20 extra
-- Zero-shot contamination check: ~$2
-- **Total Kaggle SDK: ~$391**
-- OpenRouter broad scan (15-20 models, SB1 only): ~$2-5
-- OpenRouter SB2 pilot (8-10 models, 3 instances): ~$10-20
-- OpenRouter SB2 production (6-8 models, 25 instances): ~$50-100
-- **Total OpenRouter: ~$60-125**
+**Budget math (updated 2026-03-19 — post-SB1 scan):**
+- **Spent so far:**
+  - Gemini Flash SB2 pilot (Day 1): ~$0.05
+  - OpenRouter SB1 broad scan (19 models, 60 items each): <$10
+  - **Total spent: ~$10**
+- **Remaining estimates:**
+  - OpenRouter SB2 pilot (8 models, 3 instances, 4 conditions): ~$15-20
+  - OpenRouter SB2 production (5-6 models, 25 instances): ~$50-100
+  - Kaggle SDK (2 models, full SB1 + SB2): ~$200-300
+  - **Total remaining: ~$265-420**
 - Human baselines: **$0** (informal participants, GitHub Pages hosting)
-- Local models: **$0** (5 configurations on M4 Pro)
-- **Total project: ~$450-520**
+- Local models: **$0** (RTX 5090 via LM Studio)
+- **Total project estimate: ~$275-430**
 
-**Resolution (tiered, execute in order):**
-1. **Day 1: Request quota increase.** Email kaggle-benchmarks-agi-hackathon@google.com. Request $300 top-up (cite multi-model, multi-condition factorial design). Still do this — extra buffer.
-2. **If no top-up: No problem.** $391 fits within $500/month base quota. OpenRouter budget is separate.
-3. **If tight on OpenRouter: Reduce production model count** from 8 to 5. Core hypotheses (code-tuning, reasoning-RL) get priority.
-4. **Sequence: OpenRouter broad scan first** (cheapest, maps landscape). Then SB2 on filtered models. Kaggle SDK models last.
-5. **Local models carry zero cost** — run all 5 local configurations regardless.
-6. **If tight overall: Drop micro-grammar probe** (saves $13) then trim SB1 to 2 tiers. SB2 is never cut.
+**Note:** Gemini-3.1-Pro consumed >50% of SB1 scan cost due to long reasoning traces (20K max_tokens). For SB2, use Gemini Flash where possible to manage cost. Kaggle SDK models run last to maximize remaining quota.
 
 ### Composite Score
 
@@ -943,77 +938,93 @@ for task in [learning_curve_item, corrective_feedback]:
 
 ### Strategic Principle (v11.0 — hypothesis-driven selection)
 
-Each model tests a **specific hypothesis** about what drives in-context learning and feedback sensitivity. Two-phase approach: broad scan → filtered deep dive. Total: 15-20 model configurations across Kaggle SDK, OpenRouter, and local inference.
+Each model tests a **specific hypothesis** about what drives in-context learning and feedback sensitivity. Two-phase approach: broad scan → filtered deep dive.
 
 ### Hypothesis-Driven Selection Framework
 
 **Hypothesis 1: Scale matters (within-family comparisons)**
-- Llama 3.1 8B vs 70B (same family, 9x scale difference)
-- GPT-4o-mini vs GPT-4o
-- Claude Haiku vs Sonnet
+- Claude Haiku 4.5 vs Sonnet 4.6 vs Opus 4.6 (same family, scaling)
+- GPT-5.3-Chat vs GPT-5.4-Mini (different scale points)
 
 **Hypothesis 2: Code training enables error signal processing**
-- DeepSeek-Coder-V2 vs DeepSeek-V3 (code-tuned vs general)
-- Codestral vs Mistral Large
+- GPT-5.3-Codex vs GPT-5.3-Chat (code-tuned vs general, same base model)
 - This is the most exciting hypothesis. Code models see millions of error→fix sequences in training. If they show FLR > 0 while chat models show FLR ≈ 0: **"Error-signal sensitivity is not an architectural limitation — it's a training data gap."**
 
 **Hypothesis 3: Reasoning training (RL) changes feedback processing**
-- DeepSeek-R1 vs DeepSeek-V3 (reasoning RL vs base)
-- o1-mini vs GPT-4o-mini (reasoning-tuned vs standard)
-- QwQ-32B vs Qwen3-32B (if distinct enough)
+- DeepSeek-R1 vs DeepSeek-V3.2 (reasoning RL vs base, same family)
 - RL-trained reasoning models are optimized to evaluate their own outputs. If they show better feedback sensitivity, RLHF/RLVR partially teaches error processing.
 
 **Hypothesis 4: Architecture differences**
-- Gemma 3 27B (Google open) vs Gemini Flash (Google closed) — same company, open vs closed
-- Any available Mamba/hybrid model vs standard transformer at similar scale
-- Qwen3.5-35B-A3B MoE vs Qwen3-32B dense — sparse vs dense at similar total params
+- GLM-5, MiniMax-M2.7, Kimi-K2.5, Grok-4.20 — diverse architectures from different labs
+- Qwen-3.5-397B MoE vs dense models at similar capability
 
-### Two-Phase Model Selection Protocol
+### Phase 1 — Broad Scan: COMPLETE (v1.5.0, 2026-03-19)
 
-**Phase 1 — Broad scan (SB1 only, all models):**
-Run 30 SB1 items (T1 N=8 + T2 N=8) on ALL 15-20 candidate models via Kaggle SDK + OpenRouter. Cost: ~$2-5 total. Time: a few hours. This maps the landscape.
+**19 models scanned** via OpenRouter (16) + LM Studio (5, 2 excluded for context issues). 60 STS items per model (T1/T2 x N=4/N=8 x 3 instances x 5 items). Cost: <$10 total.
 
-**Phase 1 filter:** Keep only models with T2 N=8 accuracy between 15% and 70% (floor/ceiling exclusion).
+**Filter:** T2 N=8 accuracy between 15% and 70%. **16 of 19 models pass.**
 
-**Phase 2 — Deep dive (SB2 pilot on filtered models):**
-Run SB2 pilot (3 instances, correction + practice-only + no-feedback) on the 8-10 models that pass the filter.
+See `docs/observations.md` for full results table.
 
-**Phase 3 — Production (full SB2 on informative models):**
-Run full 25-instance SB2 (4 core conditions) on the 6-8 most informative models.
+### Phase 2 — SB2 Pilot (8 models selected, PENDING)
+
+| Model | T2N8 | Hypothesis | Why |
+|-------|------|-----------|-----|
+| **GLM-5** | 67% | Ceiling reference | Highest SB1 performer |
+| **GPT-5.3-Codex** | 58% | Code training (H2) | Compare to Chat |
+| **GPT-5.3-Chat** | 50% | Code training (H2) | Compare to Codex |
+| **Gemini-3.1-Flash*** | — | Architecture diversity | Kaggle SDK model, Google judge appeal |
+| **Claude-Sonnet-4.6** | 42% | Architecture diversity | Different model family |
+| **DeepSeek-R1** | 33% | Reasoning RL (H3) | Compare to V3.2 |
+| **DeepSeek-V3.2** | 33% | Reasoning baseline (H3) | Same family, NOT reasoning-trained |
+| **Claude-Haiku-4.5** | 33% | Scale (H1) | Scale comparison within Claude family |
+
+*Gemini-3.1-Pro used >50% of total SB1 run cost due to long reasoning traces. Flash provides a Gemini architecture test at manageable cost.
+
+**Deferred:** Grok (incomplete data), Flash-Lite (too low), Kimi/MiniMax (don't test unique hypotheses), Qwen-3-Coder local (anomalous). Can add back for production if pilot reveals something worth chasing.
+
+### Phase 3 — Production (full SB2 on 5-6 most informative models)
+
+Run full 25-instance SB2 (4 core conditions) on models that produce the most interesting pilot patterns.
 
 ### Kaggle SDK Models (use quota — $50/day, $500/month)
 
 | Model | SDK String | Cost Tier | Hypothesis |
 |-------|-----------|-----------|------------|
 | **Gemini 3 Flash** | google/gemini-3-flash | Low | Baseline. Judges work at Google. |
-| **Gemini 3.1 Pro** | google/gemini-3.1-pro-preview | Medium | Scale (Flash vs Pro, same family) |
-| **Claude Sonnet 4** | anthropic/claude-sonnet-4 | Medium | Architecture family diversity |
-| **Llama 3.1 70B** | meta/llama-3.1-70b | Medium | Open-weight bridge + scale anchor |
+| **Gemini 3.1 Pro** | google/gemini-3.1-pro-preview | Medium | Scale (Flash vs Pro). Expensive due to long reasoning traces. |
 
-### OpenRouter Models (v11.0 — ~$50-100 for production runs)
+### OpenRouter Models (SB1 complete, SB2 pilot ~$15-20)
 
-| Model | Hypothesis | Why |
-|-------|-----------|-----|
-| **DeepSeek-V3** | Code training baseline | General model, not code-tuned |
-| **DeepSeek-Coder-V2** | Code training (H2) | Same family, code-tuned — if FLR differs, it's training data |
-| **DeepSeek-R1** | Reasoning RL (H3) | Same family, reasoning-tuned — if FLR differs, it's RL training |
-| **GPT-4o-mini** | Scale baseline (H1) | Small OpenAI model |
-| **GPT-4o** | Scale (H1) | Same family, larger — scale effect on feedback |
-| **o1-mini** | Reasoning RL (H3) | Same family as GPT-4o-mini, reasoning-tuned |
-| **Codestral** | Code training (H2) | Mistral's code model |
-| **Mistral Large** | Code training baseline | Same company, general model |
+| Model | T2N8 | SB2 Slot | Hypothesis |
+|-------|------|----------|-----------|
+| **GLM-5** | 67% | Yes | Ceiling reference |
+| **GPT-5.3-Codex** | 58% | Yes | Code training (H2) |
+| **GPT-5.3-Chat** | 50% | Yes | Code training baseline (H2) |
+| **MiniMax-M2.7** | 50% | Deferred | Architecture diversity |
+| **Qwen-3.5-397B** | 50% | Deferred | Scale (large MoE) |
+| **Gemini-3.1-Pro** | 42% | Deferred (cost) | Scale (Google) |
+| **Claude-Opus-4.6** | 42% | Deferred | Scale (Claude) |
+| **Claude-Sonnet-4.6** | 42% | Yes | Architecture diversity |
+| **DeepSeek-V3.2** | 33% | Yes | Reasoning baseline (H3) |
+| **Claude-Haiku-4.5** | 33% | Yes | Scale (H1, Claude) |
+| **GPT-5.4-Mini** | 33% | Deferred | Scale (OpenAI) |
+| **DeepSeek-R1** | 33% | Yes | Reasoning RL (H3) |
+| **Kimi-K2.5** | 33% | Deferred | Architecture diversity |
+| **Gemini-3.1-Flash-Lite** | 17% | Deferred | Floor reference |
+| **Grok-4.20** | 17% | Deferred | Incomplete data |
 
-### Local Models (FREE — run on M4 Pro via llama.cpp native)
+### Local Models (FREE — RTX 5090 32GB via LM Studio)
 
-| Model | Quant / Size | RAM @ 8K | Hypothesis |
-|-------|-------------|----------|------------|
-| **Qwen3-32B (thinking)** | Q4_K_M ~18GB | ~22GB | Reasoning mode (H3). Thinking traces provide qualitative data. |
-| **Qwen3-32B (no-think)** | Same weights | ~22GB | Same model, thinking disabled. Tests whether CoT changes feedback integration. |
-| **Qwen3.5-35B-A3B** | Q4_K_XL ~20GB | ~12GB active | Architecture (H4): MoE sparse vs dense |
-| **Gemma 3 27B** | Q4_K_M ~15GB | ~19GB | Architecture (H4): Google open vs closed (Gemini) |
-| **Phi-4 14B** | Q5_K_M ~10GB | ~14GB | Scale (H1): smallest model — does a smaller model learn *differently*, not just worse? |
+| Model | T2N8 | Status | Notes |
+|-------|------|--------|-------|
+| **Qwen-3-Coder-30B-A3B** | 17% | Working | 7-12s per call, passes SB2 filter |
+| **Qwen-3-1.7B** | 8% | Working | Too weak for SB2 (FAIL) |
+| **Qwen-3.5-27B** | 0% | Broken | Context window too small for thinking mode |
+| **Qwen-3.5-27B-NoThink** | 0% | Broken | Still hits context limits on N=8 |
+| **GLM-4.7-Flash** | 0% | Broken | All empty responses, context issue |
 
-**Total: 17+ configurations (4 Kaggle SDK + 8 OpenRouter + 4 local + 1 mode variant)**
+**Total scanned: 22 configurations (16 OpenRouter + 5 LM Studio + 1 excluded). 16 pass SB2 filter. 8 selected for SB2 pilot.**
 
 ### Per-Model Documentation
 
@@ -1021,39 +1032,19 @@ For each model, record in a table: Name, parameter count, active params (if MoE)
 
 ### Local Model Integration
 
-All local models run via `llama-server` (llama.cpp) exposing an OpenAI-compatible API. See `local_model_setup.md` for full build/run instructions.
+Local models run via LM Studio (v0.4.0+) exposing an OpenAI-compatible API on port 1234. See `lesson/models/lmstudio.py` for the client implementation.
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="not-needed")
+client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
-def local_model_prompt(text: str) -> str:
-    """Call llama-server's OpenAI-compatible API.
-    Same interface as kbench.llm.prompt() for evaluation parity."""
-    response = client.chat.completions.create(
-        model="local",
-        messages=[{"role": "user", "content": text}],
-        max_tokens=512,
-        temperature=0.0,
-    )
-    return response.choices[0].message.content
-
-def local_model_extract_json(text: str) -> str:
-    """JSON mode extraction for local models (v9.0+ Tier 2)."""
-    response = client.chat.completions.create(
-        model="local",
-        messages=[{"role": "user", "content": text + '\nRespond as JSON: {"output": "YOUR_ANSWER"}'}],
-        max_tokens=256,
-        temperature=0.0,
-        response_format={"type": "json_object"},
-    )
-    import json
-    parsed = json.loads(response.choices[0].message.content)
-    return parsed["output"].strip()
+# Same evaluation pipeline as OpenRouter models: identical prompts, same scoring.
+# max_tokens=2048 for LM Studio (constrained by local context window).
+# JSON schema mode (response_format=json_schema) supported.
 ```
 
-Local models use the **same evaluation pipeline** as Kaggle SDK models: identical prompts, same scoring. The only differences are the model itself, the inference backend, and the extraction tier (JSON mode vs. structured output).
+Local models use the **same evaluation pipeline** as API models: identical prompts, same scoring, same extraction tiers (JSON schema → plain prompt fallback). The only differences are the model itself and max_tokens (2,048 vs 20,000 for OpenRouter).
 
 ### Comparability Note
 
@@ -1065,13 +1056,15 @@ Comparing quantized local models (Q4_K_M, Q5_K_M) with full-precision API models
 4. **Internal consistency:** Each local model serves as its own baseline across conditions. FLR measures within-model change over turns. **All cognitive profile metrics (FLR, RII, HTR, EB, EOLR, MR) are within-model contrasts, robust to absolute accuracy differences from quantization or scale.**
 5. **Within-family comparisons are cleanest:** The hypothesis-driven selection (v11.0) prioritizes within-family comparisons (DeepSeek-V3 vs DeepSeek-Coder-V2, GPT-4o-mini vs o1-mini) where the only variable is training method, not architecture or scale.
 
-### Scheduling (v11.0 — compressed timeline)
+### Scheduling (updated 2026-03-19)
 
-- **Days 2-3:** Run no-feedback + clean-context pilots (Flash). Run OpenRouter broad scan (all 15-20 models, SB1 only). Build analysis module.
-- **Days 4-5:** Select models from broad scan. Run SB2 pilot on selected models. Run mechanistic probes on Flash.
-- **Days 6-10:** Production SB2 runs on 6-8 models. Local models + OpenRouter in parallel.
-- **Days 11-14:** Kaggle SDK models (quota). Full analysis.
-- **Days 15-28:** Polish, writeup, submission.
+- **Day 1 (Mar 18): DONE.** STS generator, evaluation pipeline, SB2 pilot framework, LM Studio + OpenRouter clients built and validated. Gemini Flash SB2 pilot (3 instances, 3 conditions) completed.
+- **Day 2 (Mar 19): DONE.** Full SB1 broad scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed (log pruning race, Unicode, context size, JSON schema caching). 8-model SB2 pilot selection complete.
+- **Days 3-4 (Mar 20-21):** Run SB2 pilot (8 models, 3 instances, 4 core conditions). Run no-feedback + clean-context probes. Build analysis module.
+- **Days 5-7 (Mar 22-24):** Analyze SB2 pilot. Select 5-6 models for production. Run mechanistic probes on 2-3 models.
+- **Days 8-12 (Mar 25-29):** Production SB2 runs (25 instances, 4 core conditions) on selected models. Extended conditions on top 3-4.
+- **Days 13-16 (Mar 30-Apr 2):** Kaggle SDK models. Full statistical analysis. Visualizations.
+- **Days 17-28 (Apr 3-16):** Polish, writeup, submission.
 
 ---
 
@@ -1270,7 +1263,7 @@ FLR by Training Type
 Written before running the full benchmark. Included in the Kaggle notebook for credibility. **Each hypothesis includes null-result interpretation — both outcomes are informative. v11.0: Expanded from 13 to 18, adding mechanistic probes (H14-H18) motivated by pilot data showing SB2 < SB1 gap.**
 
 **SB1 — Learning Curves & Strategy:**
-1. N50 varies across models (discriminatory power). Prediction: Claude Sonnet 4 ≤ Gemini Pro < Gemini Flash < Llama 70B.
+1. N50 varies across models (discriminatory power). **SB1 scan confirms:** T2N8 accuracy ranges from 67% (GLM-5) to 0% (Llama-4-Maverick) — strong discriminatory power.
    - *Null: All models have similar N50 → learning efficiency is homogeneous across architectures. Discriminatory power comes from other metrics.*
 2. RII < 0.7 for all models at Tier 3, N=8 (models are not pure rule-inducers at medium difficulty).
    - *Null: RII ≥ 0.7 → models are stronger rule-inducers than expected. The feedback story becomes "models induce rules but still can't learn from corrections" — a sharper finding.*
@@ -1309,9 +1302,9 @@ Written before running the full benchmark. Included in the Kaggle notebook for c
 **v11.0 — New Hypotheses (Mechanistic Probes + Model Selection):**
 14. Clean-context > correction for all models (context pollution hypothesis). The model's own wrong answers in conversation history poison pattern induction.
     - *Null: Clean-context ≈ correction → context pollution isn't the issue. The model genuinely hits a ceiling regardless of how information is presented.*
-15. Code-tuned models (DeepSeek-Coder-V2, Codestral) show higher FLR than their chat-tuned counterparts (DeepSeek-V3, Mistral Large). Code training teaches error-signal processing through millions of error→fix sequences.
+15. Code-tuned models (GPT-5.3-Codex) show higher FLR than their chat-tuned counterparts (GPT-5.3-Chat). Code training teaches error-signal processing through millions of error→fix sequences. **SB1 directionally supports:** Codex (58%) > Chat (50%) at T2N8.
     - *Null: Code-tuned ≈ chat-tuned on FLR → feedback blindness is architecture/scale-independent, not a training data gap. This would strengthen the "universal blindness" narrative.*
-16. Reasoning-tuned models (DeepSeek-R1, o1-mini) show higher FLR than base models (DeepSeek-V3, GPT-4o-mini). RL training partially teaches error processing.
+16. Reasoning-tuned models (DeepSeek-R1) show higher FLR than base models (DeepSeek-V3.2). RL training partially teaches error processing. **SB1 note:** R1 shows anomalous *negative* learning at T1 (53% → 20% with more examples) — overthinking effect?
     - *Null: Reasoning-tuned ≈ base on FLR → RL training doesn't transfer to in-context error-signal processing.*
 17. Structured-correction ≈ correction (format is not the issue) OR structured-correction > correction (format sensitivity). Tests whether models have learned to process error signals in code-like formats but not conversational ones.
     - *Either direction is informative. If format matters → direct implications for agentic feedback system design.*
@@ -1424,67 +1417,53 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 
 ## IMPLEMENTATION TIMELINE
 
-| Phase | Dates | Deliverables | Hours | Spend |
+| Phase | Dates | Deliverables | Status | Spend |
 |---|---|---|---|---|
-| **Days 2-3 (Mar 19-20)** | Pilot battery | Run **no-feedback** condition on existing 3 instances (Flash). Run **clean-context** on existing 3 instances (Flash). Run SB1 at **N=16 and N=32** on existing T2 instances (Flash). Fix Qwen3.5 temp, re-validate. Get Qwen3-32B dense loaded and validated. Set up **OpenRouter client** with rate limiting and logging. Build the **statistical analysis module** (JSONL → metrics → visualizations). Run **OpenRouter broad scan** (SB1 only, 30 items) on 15-20 models. | 15-20 | ~$5 |
-| **Days 4-5 (Mar 21-22)** | Model selection + deep probes | Analyze broad scan, **select 6-8 models** for SB2 (filter: T2 N=8 accuracy 15-70%). Run **SB2 pilot** (3 instances, 4 core conditions) on selected models. Run **mechanistic probes** (conditions 7-10) on Flash. Build **human baseline web tool** (accepts JSON config). Start recruiting human participants. | 15-20 | ~$30 |
-| **Days 6-10 (Mar 23-27)** | Production runs | Run full **25-instance SB2** (4 core conditions) on 6-8 models. Run **extended conditions** (explanation, misleading) on top 3-4 models. Collect human baseline data (rolling recruitment). Begin analysis and visualization. **DISCRIMINATORY POWER CHECK:** Does the 2×2 decomposition show different patterns across models? Does FLR differ by model group (code vs chat, reasoning vs base)? | 20-25 | ~$80 |
-| **Days 11-14 (Mar 28-31)** | Kaggle SDK + analysis | Run **Kaggle SDK models** (4 models, full SB1 + SB2). Full statistical analysis with bootstrap CIs. Generate all visualizations (Gap Chart, 2×2 decomposition, radar, trajectories, model grouping). Write **pre-registered hypotheses document** (18 hypotheses). **Permutation test** for model groupings (code vs chat, reasoning vs standard). | 15-20 | ~$391 |
-| **Days 15-28 (Apr 1-16)** | Polish + submit | Any re-runs needed based on analysis. Write 1,500-word writeup (**Results section FIRST**). Create the Kaggle benchmark and tasks. Build the notebook. Create cover image (the Gap Chart). **If time permits:** thinking trace analysis (keyword coding). Submit before Apr 16 11:59 PM UTC. | 10-15 | $0 |
-| **Total** | | | **75-100 hrs** | **~$450-520** |
+| **Day 1 (Mar 18)** | Foundation | STS generator, eval pipeline, SB2 pilot framework, LM Studio + OpenRouter clients, Gemini Flash SB2 pilot (3 instances, 3 conditions). | **DONE** | ~$0.05 |
+| **Day 2 (Mar 19)** | Broad scan | Full SB1 scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed. 8-model SB2 pilot selection. | **DONE** | ~$10 |
+| **Days 3-4 (Mar 20-21)** | SB2 pilot | Run SB2 pilot (8 models, 3 instances, 4 core conditions). No-feedback + clean-context probes. Build analysis module. | PENDING | ~$15-20 |
+| **Days 5-7 (Mar 22-24)** | Analyze + select | Analyze SB2 pilot results. Select 5-6 models for production. Run mechanistic probes on 2-3 models. Build human baseline web tool. | PENDING | ~$10 |
+| **Days 8-12 (Mar 25-29)** | Production runs | Full 25-instance SB2 (4 core conditions) on selected models. Extended conditions on top 3-4. Human baseline collection. **DISCRIMINATORY POWER CHECK.** | PENDING | ~$50-100 |
+| **Days 13-16 (Mar 30-Apr 2)** | Kaggle SDK + analysis | Run Kaggle SDK models (2 models, full SB1 + SB2). Full statistical analysis. All visualizations. Pre-registered hypotheses vs actuals. | PENDING | ~$200-300 |
+| **Days 17-28 (Apr 3-16)** | Polish + submit | Writeup (Results section FIRST). Kaggle benchmark + notebook. Cover image (Gap Chart). Submit before Apr 16 11:59 PM UTC. | PENDING | $0 |
+| **Total** | | | **2 of 7 phases done** | **~$275-430** |
 
 ---
 
-## WHAT TO BUILD FIRST (Day 1-2 Priority)
+## PROGRESS & NEXT STEPS (updated 2026-03-19)
 
-0. **Email for quota top-up** — BEFORE writing code.
-1. **Build llama.cpp + download models** — Get local inference running. Qwen3.5-35B-A3B first (fastest for iteration). See `local_model_setup.md`.
-2. **GATE 0: Extraction validation**
-   - Test `llm.prompt(..., schema=STSAnswer)` on 10 STS-formatted prompts per SDK model
-   - Test JSON mode (`response_format={"type": "json_object"}`) on 10 prompts on Qwen3.5-35B-A3B
-   - If structured output AND JSON mode work → extraction is solved, move on
-   - If structured output fails → Tier 3 regex with 50-prompt validation gate (v8.0 fallback)
-   - If JSON mode fails → Tier 3 regex with 50-prompt validation gate for local models
-3. **Unicode symbol pre-screening** — Test 20 candidate symbols on accessible tokenizers (Qwen, Llama, tiktoken). Select 12 most consistent. 1-2 hours.
-4. **STS Generator + Solver** — Python class. Must output: STS instances (with ≥1 non-DIRECT rule constraint), nested training examples, Type R/E/L test items with verified answers and partial-rule predictions. Include zero-shot contamination check.
-5. **Partial-rule simulator** — Exception-blind, condition-blind, order-blind. Needed for Type L items AND for misleading feedback wrong answers in SB2.
-6. **Type E item generator** — Uses nested training sets. Verify ≥90% feasibility rate on 50 test STS instances.
-7. **Micro-grammar generator** — 7 micro-grammars with diverse rule types. Quick to build.
-8. **All 10 SB2 conditions** — 4 core (correction, practice-only, error-only, no-feedback) + 2 extended (explanation, misleading) + 4 mechanistic probes (clean-context, prompted-correction, structured-correction, reformatted-correction). Multi-turn AND single-prompt-with-history implementations. Pilot both on 3 STS instances → pick one.
-9. **Statistical analysis module** — Python module: JSONL in → metrics + visualizations out. Bootstrap CIs, 2×2 decomposition, per-model profiles, cross-model comparisons. Build once, reuse for every model.
-10. **OpenRouter client** — Rate-limited, logging client. Standardized interface matching local model API.
-11. **SB1 pilot on local models** — 225 items on Qwen3.5-35B-A3B. Free. Validate gradient + calibrate SB2 tier.
-12. **Run no-feedback + clean-context pilot** — 3 existing instances on Flash. 24 API calls. Trivial cost. Critical data for the SB2 < SB1 gap.
-13. **Run SB1 at N=16 and N=32** — On existing T2 instances (Flash). Provides the comparison data point.
-14. **Build human baseline web tool** (~2 hours) — Single HTML/JS file. Accepts JSON config for STS instance + condition type. Host on GitHub Pages. Two conditions: correction + clean-context.
-15. **Informal human pilot** — 3-5 participants on STS correction via web tool. Decision gate: if humans improve → recruit remaining 15-17 on STS. If not → pivot to micro-grammar.
-16. **OpenRouter broad scan** — SB1 only (30 items) on 15-20 candidate models. Maps the landscape. ~$2-5.
+### COMPLETED (Days 1-2)
 
-**Gate: End of Day 3 (Mar 20)**
-- If extraction works (any tier) AND gradient exists AND SB2 implementation picked → full speed ahead
-- If extraction fails at all tiers: this is the existential risk. Debug until solved. Nothing else matters.
-- If gradient exists but strategy items show no signal → drop strategy analysis, proceed with learning curves + feedback only
-- If no gradient → STS rework, pause everything
-- **SB2 calibration complete:** Record which tier gives ~35-45% baseline accuracy. Concentrate SB2 there.
-- **SB2 implementation selected:** Multi-turn or single-prompt-with-history based on pilot.
-- **No-feedback + clean-context pilot data in hand:** Know whether context pollution explains the SB2 < SB1 gap.
-- **SB1 N=16/N=32 data in hand:** Comparison point for SB2's "accumulated examples" effect.
-- **OpenRouter broad scan complete:** Landscape of 15-20 models mapped. Models filtered for Phase 2.
-- **By end of Day 3 you should have pilot data on Flash + landscape scan on 15-20 models.**
+1. ~~**STS Generator + Solver**~~ — DONE. Generates STS instances with tier-appropriate rules, informative training examples, Type R/E/L test items. 0% identity examples. Type E feasibility: T2=82%, T3=90%, T4=100%.
+2. ~~**Extraction pipeline**~~ — DONE. Tiered: JSON schema → plain prompt fallback. JSON schema compatibility caching for models that don't support it (GPT-5.3, MiniMax). Symbol-aware extraction with vocabulary matching.
+3. ~~**OpenRouter client**~~ — DONE. Rate-limited with exponential backoff, logging, JSON schema fallback caching. See `lesson/models/openrouter.py`.
+4. ~~**LM Studio client**~~ — DONE. OpenAI-compatible API on port 1234, max_tokens=2048. See `lesson/models/lmstudio.py`.
+5. ~~**SB1 evaluation runner**~~ — DONE. Sequential and parallel modes. Thread-safe with print/logging locks. See `lesson/eval/pilot.py`.
+6. ~~**SB2 pilot framework**~~ — DONE. Multi-turn sessions with condition-specific feedback. See `lesson/eval/sb2_pilot.py`.
+7. ~~**OpenRouter broad scan**~~ — DONE. 19 models scanned, 16 pass filter. See `docs/observations.md`.
+8. ~~**LM Studio scan**~~ — DONE. 5 models tested, 1 passes filter (Qwen-3-Coder-30B), 3 broken (context issues), 1 too weak.
+9. ~~**Gemini Flash SB2 pilot**~~ — DONE. 3 instances, 3 conditions. FLR ~ 0 directionally. Far too small to confirm.
+10. ~~**Infrastructure hardening**~~ — DONE. Log pruning race condition, Unicode console fix, empty-response fallback, JSON schema caching.
 
-**Gate: End of Day 5 (Mar 22)**
-- **Model selection complete:** 6-8 models selected for production SB2 based on broad scan + hypothesis testing.
-- **SB2 pilot on selected models:** 3 instances, 4 core conditions. Early FLR read across model groups.
-- **Mechanistic probes complete on Flash:** Clean-context, prompted-correction, structured-correction, reformatted results.
-- **Human pilot results in hand:** Know whether to proceed with STS or pivot to micro-grammar.
-- **Story direction clear:** Universal blindness? Code-tuning advantage? Context pollution? Know the headline.
+### NEXT (Days 3-4)
 
-**Gate: End of Day 10 (Mar 27) — DISCRIMINATORY POWER**
-- Full 25-instance SB2 (4 core conditions) on 6-8 models complete.
+11. **SB2 pilot on 8 selected models** — 3 instances, 4 core conditions (correction, practice_only, error_only, no_feedback). ~$15-20 on OpenRouter.
+12. **No-feedback + clean-context probes** — Isolate whether multi-turn format itself degrades performance.
+13. **Statistical analysis module** — JSONL → metrics → visualizations. Bootstrap CIs, 2×2 decomposition, per-model profiles.
+14. **SB1 extended (N=16, N=32)** — On existing T2 instances for comparison with SB2's "accumulated examples" effect.
+
+### Gates
+
+**Gate: End of Day 4 (Mar 21)**
+- SB2 pilot data on 8 models. Early FLR read across model groups.
+- Story direction clear: Universal blindness? Code-tuning advantage? Context pollution?
+- Models selected for production.
+
+**Gate: End of Day 12 (Mar 29) — DISCRIMINATORY POWER**
+- Full 25-instance SB2 on 5-6 models complete.
 - The 2×2 decomposition: does evaluation effect ≠ answer effect?
-- **Permutation test:** Do model groupings (code vs chat, reasoning vs standard) differ on FLR?
-- If FLR or 2×2 pattern differs between model groups → proceed with grouped analysis
-- If ALL metrics identical across models → pivot narrative to "universal feedback blindness" (still novel, still publishable)
+- Permutation test: do model groupings differ on FLR?
+- If ALL metrics identical → pivot narrative to "universal feedback blindness"
 - **Do not wait until Week 4 to discover zero discrimination**
 
 ---
@@ -1507,3 +1486,16 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 | **Hypotheses** | 13 | Same | Same | Same | **18 (added H14-H18: context pollution, code-training, reasoning-RL, format sensitivity, no-feedback)** |
 | **Budget** | ~$387 + $500 Prolific | ~$410 + $500 Prolific | ~$391 + $500 Prolific | ~$391 total | **~$450-520 total (Kaggle SDK $391 + OpenRouter $60-125 + $0 human baselines)** |
 | **Execution risk** | Medium | Lower | Lowest | Lowest | **Lowest: more models at modest cost increase. OpenRouter budget is flexible.** |
+
+### v1.5.0 Status (2026-03-19)
+
+**SB1 broad scan complete.** 19 models tested across OpenRouter + LM Studio. 16 pass the SB2 filter (T2N8 15-70%). Key early findings:
+- **Discriminatory power confirmed**: 50-point spread from GLM-5 (67%) to Llama-4-Maverick (0%)
+- **Code hypothesis directionally supported**: GPT-5.3-Codex (58%) > GPT-5.3-Chat (50%)
+- **Reasoning anomaly flagged**: DeepSeek-R1 gets *worse* with more examples at T1 (53% → 20%)
+- **Claude scale gradient flat**: Opus = Sonnet = 42% at T2N8
+- **GLM-5 surprise leader**: Outperforms GPT-5.3 and Claude Opus on novel rule induction
+- **Llama models strikingly weak**: 70B at 8%, Maverick at 0% — training methodology effect
+- **Infrastructure hardened**: JSON schema caching, empty-response fallback, log pruning race fix, Unicode console fix
+
+**Next: SB2 pilot on 8 hypothesis-selected models.**
