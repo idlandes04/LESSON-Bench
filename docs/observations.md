@@ -60,6 +60,19 @@
 - **Problem with verbose models**: Gemini 3.1 Pro includes reasoning fragments ("Wait, ...") that get caught by last-line fallback. May need to strip common reasoning prefixes.
 - JSON extraction works for `{"output": "..."}` format — untested on live models yet.
 
+### 2026-03-18: Extraction pipeline overhaul
+- **Root cause of 15% false floor**: Gemini with LOW thinking + max_tokens=512 produced TRUNCATED JSON in 68% of responses (thinking tokens consumed the budget). The last-line regex fallback then picked up reasoning prose.
+- **Fixes applied**:
+  1. Structured JSON output (`response_mime_type="application/json"`) as primary extraction
+  2. Bumped max_tokens from 512 to 2048 for gemini-pro-nothink (LOW thinking still uses ~1k thinking tokens)
+  3. Added truncated JSON recovery: parses `'{"output": "▲'` even when JSON is incomplete
+  4. Added symbol-aware extraction: finds vocabulary-only substrings as fallback
+  5. Added answer normalization: strips spaces between symbols (`"◈ ⬡ ⟐"` → `"◈⬡⟐"`)
+  6. Added vocabulary listing in prompts so models know valid output symbols
+  7. Added interaction logging (JSONL) with raw prompt + raw response for every call
+- **Result**: Truncated JSON dropped from 68% to 0%. Complete JSON responses: 93%. Reasoning leaks: 7% (from 18%).
+- **Actual accuracy when extraction works**: 28% complete JSON accuracy at Tier 2 N=8 → 36%. Previous 15% was measuring extraction failures.
+
 ## Difficulty Calibration
 (Which tiers/N-values give ~35-45% accuracy for SB2 targeting)
 
@@ -67,6 +80,15 @@
 - Initial tests suggest Tier 2+ may be harder than expected — 0% on early Gemini tests (but with uninformative training examples)
 - **ACTION**: Re-run calibration after generator fix with informative training examples
 - May need to reconsider: Tier 2 at N=8 could be the sweet spot instead of Tier 3 at N=4
+
+### 2026-03-18: Post-fix calibration (Gemini 3.1 Pro, LOW thinking)
+- **Tier 2 N=4**: 12% (3/25) — too hard, model partially learning rules but not reliably
+- **Tier 2 N=8**: 36% (9/25) — IN THE SWEET SPOT for SB2 (~35-45% target)
+- **Tier 3 N=4**: 32% (7/22) — close to sweet spot
+- **Tier 3 N=8**: too few valid responses to assess (rate-limited)
+- **Near-miss analysis**: 27 responses were off by 1-2 symbols — model is genuinely attempting rule application, not guessing randomly
+- **SB2 target**: Tier 2 at N=8 or Tier 3 at N=4 are both viable. Tier 2 N=8 preferred (cleaner rules, better extraction rates)
+- **Learning signal confirmed**: N=8 > N=4 at Tier 2 (36% vs 12%), showing the model improves with more examples
 
 ## Feedback Condition Observations (SB2)
 (Early signals from correction vs practice-only comparisons)
@@ -99,3 +121,4 @@
 - Gemini API calls: ~15 total (testing connectivity + 5 Pro items + 5 Flash items)
 - Estimated cost: <$0.01 (Gemini Flash/Pro are very cheap per call)
 - Local model downloads: in progress (~63GB total)
+- Post-fix eval: ~200 Gemini calls (2 runs × 100 items). Hit 429 rate limits on second run at ~75 items. Need to add rate limiting delay between calls or reduce batch size.

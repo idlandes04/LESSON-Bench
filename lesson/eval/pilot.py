@@ -4,6 +4,13 @@ from __future__ import annotations
 
 Runs STS items through an LLM and collects accuracy results across tiers and
 N-values (learning-curve measurements).
+
+v9.0+ improvements:
+- Structured JSON output as primary extraction mode
+- Symbol vocabulary included in every prompt
+- Raw responses logged for debugging
+- Answer normalization (strips whitespace/spaces between symbols)
+- Tiered fallback: JSON → symbol-aware → regex
 """
 
 import random
@@ -12,21 +19,39 @@ from typing import Any, Dict, List, Optional
 from lesson.sts.generator import generate_dataset, format_training_examples
 from lesson.sts.types import STSDataset, TestItem
 
-from .extraction import extract_answer_regex
+from .extraction import extract_answer, normalize_answer
+from .interaction_log import InteractionLog
 
 
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
 
-def _build_prompt(n: int, examples_text: str, test_input: str) -> str:
-    """Construct the evaluation prompt for a single test item."""
+def _format_vocabulary(alphabet: list[str]) -> str:
+    """Format the STS alphabet as a vocabulary line for the prompt."""
+    return " ".join(alphabet)
+
+
+def _build_prompt(
+    n: int,
+    examples_text: str,
+    test_input: str,
+    alphabet: list[str],
+) -> str:
+    """Construct the evaluation prompt for a single test item.
+
+    Includes the symbol vocabulary so the model knows what symbols are valid,
+    and requests JSON output for clean extraction.
+    """
+    vocab_line = _format_vocabulary(alphabet)
     return (
         f"Below are {n} examples of a symbolic transformation system.\n"
+        f"The system uses these symbols: {vocab_line}\n"
         "Study the pattern, then predict the output for the final input.\n"
         f"\n{examples_text}\n"
         f"\nInput: {test_input}\n"
-        "Respond with the output symbol sequence only."
+        'Respond with ONLY a JSON object: {"output": "YOUR_ANSWER"}\n'
+        "Use only the symbols listed above in your answer."
     )
 
 
@@ -44,10 +69,11 @@ def run_sb1_pilot(
     """Run SB1 pilot: learning curves across tiers and N values.
 
     For each (tier, N, instance), generates 5 test items and prompts the model.
-    Returns structured results dict with accuracy by tier/N/item_type.
+    Uses structured JSON output as primary extraction, with symbol-aware and
+    regex fallbacks.
 
     Args:
-        client:       An LLMClient instance (must implement .prompt(text) -> str).
+        client:       An LLMClient instance (must implement .prompt_json(text)).
         tiers:        Difficulty tiers to evaluate.
         n_values:     Training-example counts (N) to sweep.
         n_instances:  Number of independent STS instances per (tier, N) cell.
@@ -55,12 +81,14 @@ def run_sb1_pilot(
 
     Returns:
         {
-            "results": [flat list of per-item result dicts],
+            "results": [flat list of per-item result dicts, including raw_response],
             "summary": {tier -> {n -> {item_type -> {"n_correct": int, "n_total": int}}}},
             "model": client.name,
         }
     """
     all_results: List[Dict[str, Any]] = []
+    model_name = getattr(client, "name", "unknown")
+    log = InteractionLog(f"{model_name}_sb1")
 
     total_cells = len(tiers) * len(n_values) * n_instances
     cell_idx = 0
@@ -90,18 +118,32 @@ def run_sb1_pilot(
                     continue
 
                 examples_text = format_training_examples(dataset.training_examples)
+                alphabet = dataset.sts.alphabet
 
                 for item_idx, item in enumerate(dataset.test_items):
-                    prompt = _build_prompt(n, examples_text, item.input_seq)
+                    prompt = _build_prompt(n, examples_text, item.input_seq, alphabet)
 
+                    # Primary: use JSON mode for structured output
                     try:
-                        response = client.prompt(prompt)
+                        raw_response = client.prompt_json(prompt)
                     except Exception as exc:
-                        print(f"  ERROR calling client.prompt: {exc}")
-                        response = ""
+                        print(f"  ERROR calling client.prompt_json: {exc}")
+                        # Fallback to plain prompt
+                        try:
+                            raw_response = client.prompt(prompt)
+                        except Exception as exc2:
+                            print(f"  ERROR calling client.prompt: {exc2}")
+                            raw_response = ""
 
-                    model_answer = extract_answer_regex(response)
-                    correct = model_answer == item.correct_output
+                    # Tiered extraction: JSON → symbol-aware → regex
+                    model_answer = extract_answer(
+                        raw_response,
+                        mode="json",
+                        vocabulary=alphabet,
+                    )
+
+                    expected = normalize_answer(item.correct_output)
+                    correct = model_answer == expected
 
                     result = {
                         "tier": tier,
@@ -112,12 +154,28 @@ def run_sb1_pilot(
                         "item_type": item.item_type.value,
                         "correct": correct,
                         "model_answer": model_answer,
-                        "expected_answer": item.correct_output,
+                        "expected_answer": expected,
                         "input_seq": item.input_seq,
+                        "raw_response": raw_response,
+                        "vocabulary": alphabet,
                     }
                     all_results.append(result)
 
-                    status = "CORRECT" if correct else f"wrong (got {model_answer!r}, expected {item.correct_output!r})"
+                    # Log the interaction for debugging
+                    log.record(
+                        prompt=prompt,
+                        raw_response=raw_response,
+                        extracted=model_answer,
+                        expected=expected,
+                        correct=correct,
+                        metadata={
+                            "tier": tier, "n": n, "instance": inst_idx,
+                            "item_type": item.item_type.value,
+                            "input_seq": item.input_seq,
+                        },
+                    )
+
+                    status = "CORRECT" if correct else f"wrong (got {model_answer!r}, expected {expected!r})"
                     print(f"  item {item_idx} [{item.item_type.value}] {item.input_seq} → {status}")
 
     # Build summary: tier -> n -> item_type -> {n_correct, n_total}
@@ -144,10 +202,13 @@ def run_sb1_pilot(
                     f"{counts['n_correct']}/{counts['n_total']} ({acc:.0%})"
                 )
 
+    log.close()
+
     return {
         "results": all_results,
         "summary": summary,
-        "model": getattr(client, "name", "unknown"),
+        "model": model_name,
+        "log_file": str(log.filepath),
     }
 
 
@@ -167,14 +228,16 @@ class _MockClient:
         self._rng = random.Random(seed)
 
     def prompt(self, text: str) -> str:
-        # Pick a random 5-symbol sequence from a small set of Unicode symbols
         symbols = ["◈", "⬡", "⟐", "⧫", "△", "▽", "○", "□"]
         length = self._rng.randint(2, 6)
         return "".join(self._rng.choice(symbols) for _ in range(length))
 
     def prompt_json(self, text: str) -> str:
         import json as _json
-        return _json.dumps({"output": self.prompt(text)})
+        symbols = ["◈", "⬡", "⟐", "⧫", "△", "▽", "○", "□"]
+        length = self._rng.randint(2, 6)
+        answer = "".join(self._rng.choice(symbols) for _ in range(length))
+        return _json.dumps({"output": answer})
 
     def multi_turn(self) -> "_MockMultiTurnSession":
         return _MockMultiTurnSession(self._rng)
@@ -187,11 +250,21 @@ class _MockMultiTurnSession:
         self._rng = rng
         self._history: List[Dict[str, str]] = []
 
-    def send(self, text: str, role: str = "user") -> str:
-        self._history.append({"role": role, "content": text})
+    def _random_answer(self) -> str:
         symbols = ["◈", "⬡", "⟐", "⧫", "△", "▽", "○", "□"]
         length = self._rng.randint(2, 6)
-        response = "".join(self._rng.choice(symbols) for _ in range(length))
+        return "".join(self._rng.choice(symbols) for _ in range(length))
+
+    def send(self, text: str, role: str = "user") -> str:
+        self._history.append({"role": role, "content": text})
+        response = self._random_answer()
+        self._history.append({"role": "assistant", "content": response})
+        return response
+
+    def send_json(self, text: str, role: str = "user") -> str:
+        self._history.append({"role": role, "content": text})
+        import json as _json
+        response = _json.dumps({"output": self._random_answer()})
         self._history.append({"role": "assistant", "content": response})
         return response
 
