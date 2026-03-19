@@ -4,8 +4,8 @@
 !.env.example
 
 # Model weights (huge files)
-models/
-llama.cpp/
+/models/
+/llama.cpp/
 
 # Python
 __pycache__/

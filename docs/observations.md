@@ -1,6 +1,6 @@
 # LESSON Observations & Lessons Learned
 ## Living document — updated as we test and iterate
-### Status: v1.5.0 SB1 scan complete (19 models, 16 pass). SB2 pilot next.
+### Status: v12.0 spec finalized. SB1 scan complete (19 models, 16 pass). SB2 pilot ACTIVE.
 
 ---
 
@@ -169,6 +169,36 @@ Each model earns its slot by testing a specific hypothesis:
 4. **Does reasoning training help or hurt?** DeepSeek-R1 vs V3.2 at the same T2N8 accuracy (33%) provides a natural pair for Hypothesis 3.
 5. **SB2 baseline gap**: Gemini Flash pilot showed SB1 T2N8=50% but SB2 correction avg=38%. The no-feedback condition will isolate whether multi-turn format itself degrades performance.
 6. **Does the R1 overthinking anomaly replicate?** T1N8 regression needs more instances to confirm or dismiss.
+
+---
+
+## v12.0 Execution Priorities (2026-03-19)
+
+### Immediate (Day 3, Mar 20)
+- **Run the 8-model SB2 pilot** (3 instances, 4 core conditions). ~$15-20. This is the single most important next action.
+- **In parallel:** No-feedback + clean-context probes on 1-2 models.
+- **In parallel:** Build analysis module so results flow immediately into visualizations.
+
+### What's been cut or reduced (v12.0)
+- **Thinking trace analysis**: CUT entirely. Qualitative fluff.
+- **Misleading condition**: Reduced from 15 instances to 3-5 instances on 2 models.
+- **Explanation condition**: Limited to top 3 models (was 3-4).
+- **Micro-grammar probe**: Deferred to late. Only run if SB1 strategy data warrants validation.
+- **Human baselines**: Don't block SB2 model runs. Recruit in parallel.
+
+### New citation: CL-Bench (Tencent/Fudan, Feb 2026)
+- Tests "context learning" on novel knowledge/rules beyond pre-training scope. Four categories including rule system application.
+- **Why it's relevant**: Closest recent competitor. Single-turn, no feedback loop, no factorial design. Complementary, not overlapping.
+- **Why it strengthens us**: Shows the field recognizes context learning as underexplored. ALP fills the specific interactive feedback gap CL-Bench doesn't touch.
+- **Must cite in writeup** — not citing it would look like an oversight to any judge who's seen it.
+
+### Kaggle SDK models: front and center
+- Judges work at Google/Kaggle. Gemini Flash and Pro must be **prominent** in the writeup, not buried among 15 OpenRouter models.
+- Run on SDK last (to maximize remaining quota) but present first in results.
+
+### Writeup warning
+- 1,500 words is extremely tight for 10 conditions, 18 hypotheses, 15+ models. Tell ONE clear story with the 2×2 as the centerpiece. Everything else goes in the notebook.
+- Practice writing the Results section at 650 words. If it doesn't fit, cut more.
 
 ---
 

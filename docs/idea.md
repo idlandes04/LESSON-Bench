@@ -1,6 +1,6 @@
 # LESSON (Learning from Error Signals in Symbolic Operations) - Spec Sheet
 ## Kaggle "Measuring AGI" Competition | Learning Track
-### Version 11.0
+### Version 12.0
 
 ---
 
@@ -59,6 +59,7 @@ Morris et al. emphasize that AGI should "continuously learn and retain new knowl
 | **MINT** (ICLR 2024) | Multi-turn feedback on existing reasoning/coding tasks using GPT-4-generated NL feedback | ALP uses contamination-proof novel STS, controlled experimental conditions (not free-form NL), and isolates feedback *type* effects via 2×2 factorial. MINT tests "can feedback help on tasks models partially know?" — ALP tests "can feedback teach something genuinely new?" |
 | **MIR-Bench** (ByteDance, Feb 2025) | Many-shot ICL on procedurally generated function-based patterns; also tested erroneous examples, finding models are remarkably robust to noise (~75% error rates barely degrade performance) | Function-derived patterns allow code-generation escape hatches (their SolverLearner paradigm). STS rules use novel Unicode symbols with no mathematical relationships, blocking code-synthesis shortcuts. MIR-Bench's erroneous-example robustness finding actually sets up ALP's contribution: *passive tolerance of noisy examples is not the same as active learning from corrections*. MIR-Bench only measures accuracy scaling — ALP adds strategy decomposition and feedback conditioning via factorial design. |
 | **Alazraki et al. 2025** | Tests whether showing incorrect examples aids LLM learning; finds models benefit from negative examples differently than humans | Uses existing tasks, not contamination-proof substrates. Tests *passive* exposure to incorrect examples, not *interactive* correction after the model's own errors. ALP tests interactive error-driven learning on provably novel tasks with a 5-condition factorial including an "error-only" condition that directly extends Alazraki's findings. **v9.0+: Hypothesis 10 pre-registered as two-sided, explicitly framing ALP's Explanation condition as an Alazraki replication probe on novel substrates.** |
+| **CL-Bench** (Tencent/Fudan, Feb 2026) | Tests "context learning" on novel knowledge/rules beyond pre-training scope, including rule system application. Four categories: knowledge recall, analogy, rule application, creative writing. | CL-Bench is single-turn (no feedback loop), no factorial design, no strategy decomposition. Tests whether models can learn novel rules from context, not whether they can learn from *corrections*. ALP fills the specific interactive feedback gap CL-Bench doesn't touch. Complementary: CL-Bench strengthens the case that context learning is underexplored; ALP adds the feedback dimension. |
 | **RULEARN/IDEA** (Zhu et al. 2024) | Interactive rule-learning benchmark testing induction, deduction, abduction via LLM agents proposing and testing hypotheses | RULEARN tests *active* exploration (model chooses what to investigate). ALP tests *receptive* learning from provided examples and corrections. Different cognitive constructs: self-directed inquiry vs. learning from instruction. ALP's controlled 2×2 factorial enables causal attribution impossible in RULEARN's open-ended setting. |
 | **"Learning vs Retrieval"** (Alon et al. 2024) | Measures extent of learning vs. knowledge retrieval during ICL on regression tasks | Uses realistic datasets with contamination risk. Tests a spectrum, not strategy decomposition at the item level. ALP's Type E/L diagnostic items provide a mechanistic decomposition (not just "how much learning") on provably novel substrates. |
 | **WILT** (Wang et al. 2024) | Probes in-context weight-update-like behavior in transformers | Mechanistic analysis of ICL internals. ALP is a behavioral benchmark measuring learning *outcomes* across conditions, not internal mechanisms. Complementary, not overlapping. |
@@ -567,8 +568,8 @@ The Explanation, Misleading, and Mechanistic Probe conditions extend the design 
 
 | Condition | What model receives after each attempt | Tests... |
 |---|---|---|
-| **Explanation** | "Correct!" / "Incorrect, answer is X because [rule]" | Whether *explanatory* feedback produces stronger learning than correction alone. Maps to Hattie & Timperley's feedback hierarchy. **Pre-registered as Alazraki replication probe** — EB may be negative (replicating Alazraki et al. 2025's finding that rationales can hurt LLM performance on novel substrates). |
-| **Misleading** | Correct feedback on 9/12 rounds, wrong feedback on 3/12 | Feedback *discrimination* — can the model detect and resist bad corrections? Does it blindly accept all feedback or evaluate critically? **Reduced to 15 STS instances at primary tier to concentrate power on the core 2×2.** |
+| **Explanation** | "Correct!" / "Incorrect, answer is X because [rule]" | Whether *explanatory* feedback produces stronger learning than correction alone. Maps to Hattie & Timperley's feedback hierarchy. **Pre-registered as Alazraki replication probe** — EB may be negative (replicating Alazraki et al. 2025's finding that rationales can hurt LLM performance on novel substrates). **v12.0: Run on top 3 models only (not 3-4).** |
+| **Misleading** | Correct feedback on 9/12 rounds, wrong feedback on 3/12 | Feedback *discrimination* — can the model detect and resist bad corrections? **v12.0: Reduced to 3-5 instances on 2 models only.** Interesting but not the story — the 2×2 is the headline. |
 
 **Mechanistic probe conditions (run at 3-5 instances on 2-3 models, pilot only):**
 
@@ -606,8 +607,9 @@ The Explanation, Misleading, and Mechanistic Probe conditions extend the design 
 
 - **Primary tier** (pilot-calibrated, default Tier 3):
   - Core 2×2: 4 conditions × 25 STS instances × 12 turns = **1,200 exchanges**
-  - Extended (Explanation + Misleading): 2 conditions × 25/15 STS instances × 12 turns = **480 exchanges** (top 3-4 models only)
-  - **Primary subtotal: 1,680 exchanges per model**
+  - Extended — Explanation: 1 condition × 25 STS instances × 12 turns = **300 exchanges** (top 3 models only)
+  - Extended — Misleading: 1 condition × 3-5 STS instances × 12 turns = **36-60 exchanges** (2 models only, v12.0 reduction)
+  - **Primary subtotal: 1,200-1,560 exchanges per model**
 - **Mechanistic probes** (pilot only, 2-3 models):
   - 4 probe conditions × 3-5 STS instances × 12 turns = **144-240 exchanges**
 - **Secondary tier** (adjacent, if budget):
@@ -617,6 +619,8 @@ The Explanation, Misleading, and Mechanistic Probe conditions extend the design 
 - **Total SB2 across 15+ models: ~25,000-35,000 exchanges**
 
 **v11.0 change:** Extended from 8 to 12 turns per sequence (spec always said 12, pilot used 8). More turns = more data per instance = more power per model. Added no-feedback as fourth core condition. Mechanistic probes (conditions 7-10) do not go on the leaderboard — they appear in "Technical Details" and "Results & Insights" as evidence about WHY FLR ≈ 0.
+
+**v12.0 change:** Misleading condition reduced from 15 instances to 3-5 instances on 2 models only. Explanation condition limited to top 3 models. Thinking trace analysis cut entirely. These reductions concentrate effort on the core 2×2 factorial, which is the headline contribution.
 
 **Critical:** Use the SAME 3 STS instances for ALL pilot runs across ALL models and conditions. Per-instance difficulty is controlled when comparing Gemini vs Llama vs DeepSeek on identical instances. Different instances for different models would confound model effects with instance effects.
 
@@ -727,22 +731,9 @@ For each model, construct a 5-axis radar chart:
 
 Human baseline as a dashed polygon. Each model as a colored filled polygon. At a glance, you see each model's "cognitive shape" — where it's strong and where it collapses.
 
-### Thinking Trace Analysis (Week 4 Enrichment — if time permits)
+### Thinking Trace Analysis — CUT (v12.0)
 
-Qwen3-32B and Qwen3.5-35B-A3B produce `<think>...</think>` blocks in reasoning mode. These provide free qualitative data about learning strategy.
-
-**If time permits in Week 4,** code thinking traces for strategy signals using keyword regex:
-
-```python
-strategy_keywords = {
-    "rule_mention": [r"rule", r"pattern", r"always", r"whenever", r"if.*then"],
-    "exemplar_mention": [r"similar to", r"like example", r"same as", r"looks like"],
-    "uncertainty": [r"not sure", r"unclear", r"might be", r"guess"],
-    "self_correction": [r"wait", r"actually", r"no,", r"let me reconsider"],
-}
-```
-
-**Convergent validity:** Compare keyword-classified strategy with quantitative RII. If keywords say "exemplar_matching" and RII is low, that's convergent. If they disagree, that's interesting (the model's stated strategy doesn't match its behavior). This is enrichment — not core to the submission. The quantitative RII is the primary strategy metric regardless.
+~~Qualitative thinking trace coding was planned as Week 4 enrichment.~~ **Cut in v12.0.** The quantitative RII is the primary strategy metric. Thinking trace coding is qualitative fluff that won't change the headline and consumes polish time better spent on the 2×2 writeup. Thinking traces are still *logged* (free data) and can be revisited post-submission if interesting.
 
 ---
 
@@ -1389,7 +1380,7 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 | SB2 primary tier miscalibrated | Medium | **High** | SB1 pilot calibrates tier selection. If ~40% zone doesn't exist at any tier, widen to ~25-55% range. Secondary tier provides backup. |
 | Human FLR ≈ 0 on STS (alien task problem) | Medium | **High** | Week 1 pilot (3-5 people via web tool). If humans can't learn STS either → pivot to micro-grammar for remaining 15-17 participants. Pre-registered either way. |
 | Tokenization confound across models | Low-Med | **Low** | Pre-screen symbols for tokenization consistency on accessible tokenizers. Note as limitation for closed models. Within-model contrasts unaffected. |
-| Literature gap discovered by judges | Low (v10.0) | **High** | v10.0: Added LLF-Bench, FB-Bench, Self-Correction Bench to differentiation table. Sharpened "first" claims to the specific novelty (factorial decomposition on novel substrates), not the general space (interactive feedback). |
+| Literature gap discovered by judges | Low (v12.0) | **High** | v10.0: Added LLF-Bench, FB-Bench, Self-Correction Bench. v12.0: Added CL-Bench (Tencent/Fudan, Feb 2026) — most relevant recent competitor, strengthens our argument. Sharpened "first" claims to the specific novelty (factorial decomposition on novel substrates), not the general space (interactive feedback). |
 
 ---
 
@@ -1402,7 +1393,7 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 | Methods | 250 | STS design + contamination defense. 10 conditions (4 core + 2 extended + 4 mechanistic probes), 2×2 factorial table. Key metrics (FLR, 2×2 decomposition, EB, EOLR, MR). SB1 briefly: learning curves + strategy decomposition as supporting context. 15+ model configurations (hypothesis-driven: scale, code-tuning, reasoning-RL). Structured output extraction. Human baselines: 20 informal participants, correction + clean-context, descriptive comparison. |
 | Results & Insights | 650 | **Lead with the Gap Chart** (headline: humans learn from corrections, models don't). **The 2×2 Decomposition** (evaluation effect vs. answer effect — proper marginal averaging with no-feedback baseline). **The SB2 < SB1 finding** (context pollution from wrong answers — clean-context probe). **Code-training hypothesis** (do code-tuned models show higher FLR?). EB direction (Alazraki replication?). Per-model highlights by hypothesis group. Cognitive Profile Radar. Strategy profiles (brief). Pre-registered predictions vs. actuals (18 hypotheses). |
 | Affiliations | 25 | Independent researcher / Hollis Health LLC |
-| References | 75 | ~19 citations: Morris et al. 2024 (DeepMind cognitive framework), Rescorla & Wagner 1972, Hattie & Timperley 2007, Cheng et al. 2023 (LLF-Bench), Li et al. 2025 (FB-Bench), Tsui 2025 (Self-Correction Bench), Wang et al. 2024 (MINT), Hamdan & Yuret 2025 (Likra), Alazraki et al. 2025, MIR-Bench 2025, RULEARN/IDEA (Zhu et al. 2024), Alon et al. 2024, Logan 1988, Johansen & Palmeri 2002, Olsson et al. 2022 (induction heads), von Oswald et al. 2023 (ICL as gradient descent), Berko 1958, WILT (Wang et al. 2024), iolbench, Liu et al. 2024 ("lost in the middle" attention) |
+| References | 75 | ~20 citations: Morris et al. 2024 (DeepMind cognitive framework), Rescorla & Wagner 1972, Hattie & Timperley 2007, Cheng et al. 2023 (LLF-Bench), Li et al. 2025 (FB-Bench), Tsui 2025 (Self-Correction Bench), Wang et al. 2024 (MINT), Hamdan & Yuret 2025 (Likra), Alazraki et al. 2025, MIR-Bench 2025, **CL-Bench (Tencent/Fudan, Feb 2026)**, RULEARN/IDEA (Zhu et al. 2024), Alon et al. 2024, Logan 1988, Johansen & Palmeri 2002, Olsson et al. 2022 (induction heads), von Oswald et al. 2023 (ICL as gradient descent), Berko 1958, WILT (Wang et al. 2024), iolbench, Liu et al. 2024 ("lost in the middle" attention) |
 | **Total** | **1,220** | *280 words buffer for data-dependent details* |
 
 **Title (gradient finding):** "Can AI Models Learn from Their Mistakes? A 2×2 Factorial Decomposition of Error-Driven Learning across 15+ LLMs"
@@ -1420,17 +1411,18 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 | Phase | Dates | Deliverables | Status | Spend |
 |---|---|---|---|---|
 | **Day 1 (Mar 18)** | Foundation | STS generator, eval pipeline, SB2 pilot framework, LM Studio + OpenRouter clients, Gemini Flash SB2 pilot (3 instances, 3 conditions). | **DONE** | ~$0.05 |
-| **Day 2 (Mar 19)** | Broad scan | Full SB1 scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed. 8-model SB2 pilot selection. | **DONE** | ~$10 |
-| **Days 3-4 (Mar 20-21)** | SB2 pilot | Run SB2 pilot (8 models, 3 instances, 4 core conditions). No-feedback + clean-context probes. Build analysis module. | PENDING | ~$15-20 |
-| **Days 5-7 (Mar 22-24)** | Analyze + select | Analyze SB2 pilot results. Select 5-6 models for production. Run mechanistic probes on 2-3 models. Build human baseline web tool. | PENDING | ~$10 |
-| **Days 8-12 (Mar 25-29)** | Production runs | Full 25-instance SB2 (4 core conditions) on selected models. Extended conditions on top 3-4. Human baseline collection. **DISCRIMINATORY POWER CHECK.** | PENDING | ~$50-100 |
+| **Day 2 (Mar 19)** | Broad scan | Full SB1 scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed. 8-model SB2 pilot selection. Spec v12.0 finalized. | **DONE** | ~$10 |
+| **Day 3 (Mar 20)** | SB2 pilot (EXECUTE) | Run SB2 pilot (8 models, 3 instances, 4 core conditions). **In parallel:** no-feedback + clean-context probes on 1-2 models. Build analysis module so results flow immediately into visualizations. | **ACTIVE** | ~$15-20 |
+| **Day 4 (Mar 21)** | Analyze + decide | Analyze SB2 pilot. Story direction clear: universal blindness? code-tuning advantage? context pollution? Select 5-6 models for production. | PENDING | ~$5 |
+| **Days 5-7 (Mar 22-24)** | Production ramp | Full 25-instance SB2 (4 core conditions) on selected models. Mechanistic probes on 2-3 models. Build human baseline web tool. Start recruiting. | PENDING | ~$30-50 |
+| **Days 8-12 (Mar 25-29)** | Production complete | Remaining production SB2 runs. Explanation on top 3 models. Misleading on 2 models (3-5 instances). Human baseline collection. **DISCRIMINATORY POWER CHECK.** | PENDING | ~$30-60 |
 | **Days 13-16 (Mar 30-Apr 2)** | Kaggle SDK + analysis | Run Kaggle SDK models (2 models, full SB1 + SB2). Full statistical analysis. All visualizations. Pre-registered hypotheses vs actuals. | PENDING | ~$200-300 |
 | **Days 17-28 (Apr 3-16)** | Polish + submit | Writeup (Results section FIRST). Kaggle benchmark + notebook. Cover image (Gap Chart). Submit before Apr 16 11:59 PM UTC. | PENDING | $0 |
-| **Total** | | | **2 of 7 phases done** | **~$275-430** |
+| **Total** | | | **2 of 7 phases done** | **~$290-445** |
 
 ---
 
-## PROGRESS & NEXT STEPS (updated 2026-03-19)
+## PROGRESS & NEXT STEPS (updated 2026-03-19, v12.0)
 
 ### COMPLETED (Days 1-2)
 
@@ -1444,13 +1436,25 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 8. ~~**LM Studio scan**~~ — DONE. 5 models tested, 1 passes filter (Qwen-3-Coder-30B), 3 broken (context issues), 1 too weak.
 9. ~~**Gemini Flash SB2 pilot**~~ — DONE. 3 instances, 3 conditions. FLR ~ 0 directionally. Far too small to confirm.
 10. ~~**Infrastructure hardening**~~ — DONE. Log pruning race condition, Unicode console fix, empty-response fallback, JSON schema caching.
+11. ~~**Spec v12.0**~~ — DONE. Execution-focused scope tightening. CL-Bench added. Thinking traces cut. Misleading/explanation reduced.
 
-### NEXT (Days 3-4)
+### NEXT 48 HOURS — EXECUTE (Days 3-4, Mar 20-21)
 
-11. **SB2 pilot on 8 selected models** — 3 instances, 4 core conditions (correction, practice_only, error_only, no_feedback). ~$15-20 on OpenRouter.
-12. **No-feedback + clean-context probes** — Isolate whether multi-turn format itself degrades performance.
-13. **Statistical analysis module** — JSONL → metrics → visualizations. Bootstrap CIs, 2×2 decomposition, per-model profiles.
-14. **SB1 extended (N=16, N=32)** — On existing T2 instances for comparison with SB2's "accumulated examples" effect.
+**Priority 1 (Day 3):** Run the 8-model SB2 pilot (3 instances, 4 core conditions). ~$15-20. This gives you data to make every subsequent decision.
+
+**Priority 2 (Day 3, in parallel):** Run no-feedback + clean-context probes on 1-2 models to understand the SB2 < SB1 gap.
+
+**Priority 3 (Day 3-4, in parallel):** Build the analysis module so results flow immediately into visualizations. Don't wait for all data before building the pipeline.
+
+**Priority 4 (Day 4):** SB1 extended (N=16, N=32) on existing T2 instances for comparison with SB2's "accumulated examples" effect.
+
+### WHAT TO DEFER OR CUT
+
+- ~~Thinking trace analysis~~ — CUT (v12.0). Qualitative, won't change headline.
+- **Misleading at full scale** — reduced to 3-5 instances on 2 models. Not the story.
+- **Extended conditions (explanation) on more than 3 models** — the 2×2 is the headline, not extensions.
+- **Micro-grammar ecological validity probe** — run late, only if SB1 strategy data is interesting enough.
+- **Human baselines** — don't block SB2 model runs on human data collection. Run in parallel.
 
 ### Gates
 
@@ -1470,22 +1474,22 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 
 ## VERSION HISTORY (refinement direction to prevent thrashing)
 
-| Dimension | v8.0  | v9.0  | v10.0/10.1  | v10.2  | v11.0 |
-|---|---|---|---|---|---|
-| **Narrative** | ONE story: 2×2 factorial | ONE story (unchanged) | Dual-ready: gradient + "universal blindness" | Unchanged | **Triple-ready: gradient + universal blindness + code-training hypothesis** |
-| **2×2 Design** | SB1 as baseline cell | Same | Same | Same | **No-feedback condition fills baseline cell. True 2×2, all same format. Proper marginal averaging.** |
-| **Conditions** | 5 (correction, explanation, practice, error, misleading) | Same | Same | Same | **10 total: 4 core + 2 extended + 4 mechanistic probes (clean-context, prompted, structured, reformatted)** |
-| **Models** | 9 (4 SDK + 5 local) | Same | Same | Same | **15-20 (4 SDK + 8 OpenRouter + 5 local). Two-phase hypothesis-driven selection: broad scan → filtered deep dive.** |
-| **Model selection** | Architecture diversity | Same | Same | Same | **Hypothesis-driven: scale (H1), code-training (H2), reasoning-RL (H3), architecture (H4). Each model tests a specific claim.** |
-| **SB2 < SB1 gap** | Not observed | Not observed | Not observed | Not observed | **Dedicated section + mechanistic probes. Context pollution, format degradation, lost-in-the-middle tested explicitly.** |
-| **SB1 extended** | N=2,4,8,16,32 | Same | Same | Same | **Added N=16, N=32 on existing instances for comparison with SB2 "accumulated examples" effect** |
-| **Statistical infrastructure** | Ad hoc | Same | Same | Same | **Dedicated analysis module: JSONL → metrics → visualizations. Bootstrap CIs, permutation tests for model groupings.** |
-| **Human baselines** | Prolific, $500, 50 people | Same | Same | 20 informal, $0 | **20 informal, $0, correction + clean-context within-subjects. Tests context pollution in humans vs models.** |
-| **Literature gaps** | Missing LLF-Bench, FB-Bench, Self-Correction Bench | Same | All added + Hamdan & Yuret 2025 (Likra) | Unchanged | **Unchanged** |
-| **SB2 piloting** | Week 2 | Week 2 | Front-loaded to Week 1 | Unchanged | **Days 2-3. No-feedback + clean-context pilot immediately.** |
-| **Hypotheses** | 13 | Same | Same | Same | **18 (added H14-H18: context pollution, code-training, reasoning-RL, format sensitivity, no-feedback)** |
-| **Budget** | ~$387 + $500 Prolific | ~$410 + $500 Prolific | ~$391 + $500 Prolific | ~$391 total | **~$450-520 total (Kaggle SDK $391 + OpenRouter $60-125 + $0 human baselines)** |
-| **Execution risk** | Medium | Lower | Lowest | Lowest | **Lowest: more models at modest cost increase. OpenRouter budget is flexible.** |
+| Dimension | v8.0  | v9.0  | v10.0/10.1  | v10.2  | v11.0 | v12.0 |
+|---|---|---|---|---|---|---|
+| **Narrative** | ONE story: 2×2 factorial | ONE story (unchanged) | Dual-ready: gradient + "universal blindness" | Unchanged | Triple-ready: gradient + universal blindness + code-training hypothesis | **Unchanged. Execution-focused revision.** |
+| **2×2 Design** | SB1 as baseline cell | Same | Same | Same | No-feedback condition fills baseline cell. True 2×2, all same format. Proper marginal averaging. | **Unchanged** |
+| **Conditions** | 5 (correction, explanation, practice, error, misleading) | Same | Same | Same | 10 total: 4 core + 2 extended + 4 mechanistic probes | **10 total. Misleading reduced to 3-5 instances on 2 models. Explanation limited to top 3. Thinking trace analysis cut.** |
+| **Models** | 9 (4 SDK + 5 local) | Same | Same | Same | 15-20. Two-phase hypothesis-driven selection. | **Unchanged** |
+| **Model selection** | Architecture diversity | Same | Same | Same | Hypothesis-driven: scale (H1), code-training (H2), reasoning-RL (H3), architecture (H4). | **Unchanged** |
+| **SB2 < SB1 gap** | Not observed | Not observed | Not observed | Not observed | Dedicated section + mechanistic probes. | **Unchanged** |
+| **SB1 extended** | N=2,4,8,16,32 | Same | Same | Same | Added N=16, N=32 on existing instances. | **Unchanged** |
+| **Statistical infrastructure** | Ad hoc | Same | Same | Same | Dedicated analysis module. | **Unchanged** |
+| **Human baselines** | Prolific, $500, 50 people | Same | Same | 20 informal, $0 | 20 informal, $0, correction + clean-context within-subjects. | **Unchanged. Don't block SB2 runs on human data.** |
+| **Literature gaps** | Missing LLF-Bench, FB-Bench, Self-Correction Bench | Same | All added + Hamdan & Yuret 2025 (Likra) | Unchanged | Unchanged | **Added CL-Bench (Tencent/Fudan, Feb 2026)** |
+| **SB2 piloting** | Week 2 | Week 2 | Front-loaded to Week 1 | Unchanged | Days 2-3. | **Day 3 (TODAY). Stop planning, execute.** |
+| **Hypotheses** | 13 | Same | Same | Same | 18 (added H14-H18). | **Unchanged** |
+| **Budget** | ~$387 + $500 Prolific | ~$410 + $500 Prolific | ~$391 + $500 Prolific | ~$391 total | ~$450-520 total | **~$290-445 total (reduced misleading/extended saves ~$30-50)** |
+| **Execution risk** | Medium | Lower | Lowest | Lowest | Lowest | **Lowest. v12.0 is a scope-tightening release. No new complexity.** |
 
 ### v1.5.0 Status (2026-03-19)
 
@@ -1498,4 +1502,15 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 - **Llama models strikingly weak**: 70B at 8%, Maverick at 0% — training methodology effect
 - **Infrastructure hardened**: JSON schema caching, empty-response fallback, log pruning race fix, Unicode console fix
 
-**Next: SB2 pilot on 8 hypothesis-selected models.**
+### v12.0 Changes (2026-03-19)
+
+**Execution-focused revision. No new complexity — only scope tightening and prioritization.**
+
+1. **Added CL-Bench** (Tencent/Fudan, Feb 2026) to differentiation table. Single-turn context learning benchmark — complementary, not overlapping. Strengthens the case that context learning is underexplored.
+2. **Cut thinking trace analysis** entirely. Qualitative fluff that won't change the headline.
+3. **Reduced misleading condition** to 3-5 instances on 2 models (was 15 instances on top 3-4). Interesting but not the story.
+4. **Limited explanation condition** to top 3 models (was 3-4).
+5. **Accelerated timeline**: SB2 pilot begins Day 3 (Mar 20). Analysis module built in parallel so results flow directly into visualizations.
+6. **Micro-grammar probe**: run late, only if SB1 strategy data warrants validation. Don't prioritize over SB2.
+
+**The plan is good enough. Execute.**
