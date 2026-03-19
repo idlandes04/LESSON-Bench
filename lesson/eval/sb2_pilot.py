@@ -17,7 +17,7 @@ v9.0+ improvements:
 - Answer normalization for robust comparison
 - Tiered fallback: JSON → symbol-aware → regex
 
-v11.0 additions needed:
+v11.0 additions:
 - no_feedback condition ("Next question." — no evaluation, no answer)
 - clean_context condition (single-prompt-with-history, correct pairs only)
 - prompted_correction condition (reflection prompt after error)
@@ -127,6 +127,105 @@ def _feedback_misleading(
     return f"Correct! The output is {wrong}."  # Deceptively marks it as correct
 
 
+def _feedback_no_feedback(input_seq: str, correct: str, model_answer: str) -> str:
+    """No-feedback condition: always returns a static transition phrase."""
+    return "Next question."
+
+
+def _feedback_prompted_correction(
+    input_seq: str, correct: str, model_answer: str
+) -> str:
+    """Prompted correction: correction feedback plus a reflection prompt on errors."""
+    if model_answer == correct:
+        return f"Correct! The output is {correct}."
+    return (
+        f"Incorrect. The correct output is {correct}.\n"
+        "Before answering the next question, briefly state what pattern you "
+        "think explains why your previous answer was wrong."
+    )
+
+
+def _feedback_structured_correction(
+    input_seq: str, correct: str, model_answer: str
+) -> str:
+    """Structured correction: code-test-style pass/fail with per-position diff."""
+    if model_answer == correct:
+        return (
+            f"TEST PASSED\n"
+            f"Input: {input_seq}\n"
+            f"Expected: {correct}\n"
+            f"Your output: {model_answer}\n"
+            f"Result: PASS"
+        )
+
+    # Build per-position diff (only mismatched positions)
+    diff_parts = []
+    max_len = max(len(correct), len(model_answer))
+    for pos in range(max_len):
+        expected_char = correct[pos] if pos < len(correct) else "<missing>"
+        got_char = model_answer[pos] if pos < len(model_answer) else "<missing>"
+        if expected_char != got_char:
+            diff_parts.append(
+                f"position {pos} (expected {expected_char}, got {got_char})"
+            )
+
+    diff_str = ", ".join(diff_parts) if diff_parts else "length mismatch"
+    return (
+        f"TEST FAILED\n"
+        f"Input: {input_seq}\n"
+        f"Expected: {correct}\n"
+        f"Your output: {model_answer}\n"
+        f"Diff: {diff_str}"
+    )
+
+
+def _feedback_reformatted_correction(
+    input_seq: str, correct: str, model_answer: str
+) -> str:
+    """Reformatted correction: presents the correct answer as a training example."""
+    if model_answer == correct:
+        return f"Correct! Example: {input_seq} \u2192 {correct}"
+    return f"Example: {input_seq} \u2192 {correct}"
+
+
+# ---------------------------------------------------------------------------
+# Clean-context prompt builder
+# ---------------------------------------------------------------------------
+
+def _build_clean_context_prompt(
+    examples_text: str,
+    vocab_line: str,
+    n_initial_examples: int,
+    accumulated_examples: List[Tuple[str, str]],
+    input_seq: str,
+) -> str:
+    """Build a single prompt for the clean_context condition.
+
+    Includes the original training examples, accumulated correct pairs
+    formatted as additional examples, and the test question.
+    """
+    # Format accumulated correct pairs as additional examples
+    extra_lines = []
+    for i, (inp, out) in enumerate(accumulated_examples, n_initial_examples + 1):
+        extra_lines.append(f"Example {i}: {inp} \u2192 {out}")
+    extra_text = "\n".join(extra_lines)
+
+    total_examples = n_initial_examples + len(accumulated_examples)
+    prompt = (
+        f"You are learning a symbolic transformation system.\n"
+        f"The system uses these symbols: {vocab_line}\n"
+        f"Here are {total_examples} examples:\n\n{examples_text}"
+    )
+    if extra_text:
+        prompt += f"\n{extra_text}"
+    prompt += (
+        "\n\nStudy the pattern.\n"
+        f"What is the output for: {input_seq}\n"
+        'Respond with ONLY: {{"output": "YOUR_ANSWER"}}'
+    )
+    return prompt
+
+
 # ---------------------------------------------------------------------------
 # Test sequence generation
 # ---------------------------------------------------------------------------
@@ -182,11 +281,16 @@ def run_sb2_pilot(
     3. Track accuracy per turn with raw response logging.
 
     Supported conditions:
-        "correction"    — reveals correct answer on errors, confirms on correct
-        "practice_only" — always reveals the answer as a transition phrase
-        "error_only"    — correct/incorrect signal only, no answer revealed
-        "explanation"   — correction plus brief rule description
-        "misleading"    — provides wrong answer on every third turn
+        "correction"              — reveals correct answer on errors, confirms on correct
+        "practice_only"           — always reveals the answer as a transition phrase
+        "error_only"              — correct/incorrect signal only, no answer revealed
+        "explanation"             — correction plus brief rule description
+        "misleading"              — provides wrong answer on every third turn
+        "no_feedback"             — static "Next question." regardless of correctness
+        "clean_context"           — single-prompt with growing context of correct pairs only
+        "prompted_correction"     — correction plus reflection prompt on errors
+        "structured_correction"   — code-test-style pass/fail with per-position diff
+        "reformatted_correction"  — correct answer presented as a training example
 
     Args:
         client:              An LLMClient instance (must implement .multi_turn()).
@@ -246,6 +350,78 @@ def run_sb2_pilot(
             cell_idx += 1
             print(f"  [{cell_idx}/{total_cells}] condition={condition!r}")
 
+            # ---------------------------------------------------------------
+            # clean_context: single-prompt-with-growing-context code path
+            # ---------------------------------------------------------------
+            if condition == "clean_context":
+                accumulated_examples: List[Tuple[str, str]] = []
+
+                for turn_idx, (inp, correct) in enumerate(test_sequence):
+                    prompt = _build_clean_context_prompt(
+                        examples_text=examples_text,
+                        vocab_line=vocab_line,
+                        n_initial_examples=n_initial_examples,
+                        accumulated_examples=accumulated_examples,
+                        input_seq=inp,
+                    )
+
+                    try:
+                        raw_response = client.prompt_json(prompt)
+                    except Exception as exc:
+                        print(f"    ERROR on turn {turn_idx}: {exc}")
+                        raw_response = ""
+
+                    model_answer = extract_answer(
+                        raw_response,
+                        mode="json",
+                        vocabulary=alphabet,
+                    )
+
+                    expected = normalize_answer(correct)
+                    is_correct = model_answer == expected
+
+                    # Always accumulate the correct pair (regardless of model accuracy)
+                    accumulated_examples.append((inp, correct))
+
+                    result = {
+                        "condition": condition,
+                        "instance_idx": inst_idx,
+                        "sts_id": sts.id,
+                        "tier": tier,
+                        "turn_idx": turn_idx,
+                        "input_seq": inp,
+                        "correct": is_correct,
+                        "model_answer": model_answer,
+                        "expected_answer": expected,
+                        "feedback_given": "(clean_context — no feedback)",
+                        "raw_response": raw_response,
+                        "vocabulary": alphabet,
+                    }
+                    all_results.append(result)
+
+                    log.record(
+                        prompt=prompt,
+                        raw_response=raw_response,
+                        extracted=model_answer,
+                        expected=expected,
+                        correct=is_correct,
+                        metadata={
+                            "condition": condition, "tier": tier,
+                            "instance": inst_idx, "turn": turn_idx,
+                            "input_seq": inp,
+                            "n_accumulated": len(accumulated_examples),
+                        },
+                    )
+
+                    status = "OK" if is_correct else f"WRONG (got {model_answer!r})"
+                    print(f"    turn {turn_idx}: {inp} \u2192 {status}")
+
+                continue  # skip the multi-turn code path below
+
+            # ---------------------------------------------------------------
+            # Standard multi-turn code path
+            # ---------------------------------------------------------------
+
             # Determine misleading turns (every 3rd turn for "misleading" condition)
             mislead_turns = set()  # type: set
             if condition == "misleading":
@@ -276,7 +452,11 @@ def run_sb2_pilot(
                 try:
                     raw_response = session.send_json(question, role="user")
                 except Exception:
-                    # Fallback to plain send
+                    # send_json already appended the user message to history
+                    # before the API call failed — remove it to avoid
+                    # double-injection when we fall back to plain send.
+                    if hasattr(session, '_history') and session._history:
+                        session._history.pop()
                     try:
                         raw_response = session.send(question, role="user")
                     except Exception as exc:
@@ -336,7 +516,7 @@ def run_sb2_pilot(
                 )
 
                 status = "OK" if is_correct else f"WRONG (got {model_answer!r})"
-                print(f"    turn {turn_idx}: {inp} → {status}")
+                print(f"    turn {turn_idx}: {inp} \u2192 {status}")
 
     # Build summary: condition -> turn_idx -> {n_correct, n_total}
     summary: Dict[str, Dict[int, Dict[str, int]]] = {}
@@ -391,5 +571,13 @@ def _generate_feedback(
         return _feedback_misleading(
             sts, input_seq, correct, model_answer, rng, mislead_this_turn
         )
+    elif condition == "no_feedback":
+        return _feedback_no_feedback(input_seq, correct, model_answer)
+    elif condition == "prompted_correction":
+        return _feedback_prompted_correction(input_seq, correct, model_answer)
+    elif condition == "structured_correction":
+        return _feedback_structured_correction(input_seq, correct, model_answer)
+    elif condition == "reformatted_correction":
+        return _feedback_reformatted_correction(input_seq, correct, model_answer)
     else:
         raise ValueError(f"Unknown condition: {condition!r}")
