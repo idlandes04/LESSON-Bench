@@ -207,13 +207,27 @@ class LMStudioClient(LLMClient):
 # ---------------------------------------------------------------------------
 
 LMSTUDIO_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
-    "qwen3-coder-30b": {
-        "model_id": None,  # auto-detect from loaded model
+    # Model IDs must match what LM Studio reports via GET /v1/models.
+    # Current loaded models (as of 2026-03-19):
+    #   nvidia/nemotron-3-nano, qwen/qwen3.5-35b-a3b, qwen3.5-27b,
+    #   zai-org/glm-4.7-flash, text-embedding-nomic-embed-text-v1.5
+    "lm-nemotron-nano": {
+        "model_id": "nvidia/nemotron-3-nano",
         "max_tokens": 2048,
         "port": 1234,
     },
-    "qwen3-1.7b": {
-        "model_id": None,
+    "lm-qwen3.5-35b-a3b": {
+        "model_id": "qwen/qwen3.5-35b-a3b",
+        "max_tokens": 2048,
+        "port": 1234,
+    },
+    "lm-qwen3.5-27b": {
+        "model_id": "qwen3.5-27b",
+        "max_tokens": 2048,
+        "port": 1234,
+    },
+    "lm-glm-4.7-flash": {
+        "model_id": "zai-org/glm-4.7-flash",
         "max_tokens": 2048,
         "port": 1234,
     },
