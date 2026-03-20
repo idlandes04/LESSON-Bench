@@ -86,6 +86,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         smoke_test,
         run_parallel_by_provider,
         print_cross_model_summary,
+        get_valid_instances,
     )
     from lesson.models.registry import get_client
     from lesson.eval.sb2_pilot import run_sb2_pilot
@@ -159,9 +160,26 @@ def cmd_run(args: argparse.Namespace) -> None:
             with print_lock:
                 print(f"\n  {provider}:{model_name} — {condition}")
 
+            # Load pre-completed instances from the resume directory (if any)
+            completed_for_condition: Optional[Dict[int, list]] = None
+            if args.resume_from:
+                valid = get_valid_instances(args.resume_from, model_name, condition)
+                if valid:
+                    with print_lock:
+                        print(
+                            f"    [resume] {len(valid)} valid instance(s) loaded "
+                            f"from {args.resume_from} — will skip these"
+                        )
+                    completed_for_condition = valid
+
             t0 = time.time()
             try:
                 client = get_client(provider, model_name)
+                completed_instances_arg = (
+                    {condition: completed_for_condition}
+                    if completed_for_condition is not None
+                    else None
+                )
                 sb2 = run_sb2_pilot(
                     client=client,
                     tier=args.tier,
@@ -169,7 +187,8 @@ def cmd_run(args: argparse.Namespace) -> None:
                     n_instances=args.n_instances,
                     n_turns=args.n_turns,
                     conditions=[condition],
-                    max_parallel=1,
+                    max_parallel=args.max_parallel,
+                    completed_instances=completed_instances_arg,
                 )
                 elapsed = time.time() - t0
                 model_results[f"sb2_{condition}"] = sb2
@@ -574,9 +593,20 @@ def main():
     sp_run.add_argument("--n-turns", type=int, default=12, help="Turns per instance (default: 12)")
     sp_run.add_argument("--tier", type=int, default=2, help="STS difficulty tier (default: 2)")
     sp_run.add_argument("--or-parallel", type=int, default=8, help="Max parallel OR models (default: 8)")
+    sp_run.add_argument("--max-parallel", type=int, default=1,
+                        help="Max parallel instances per condition (default: 1). "
+                             "Each STS instance is independent — safe up to ~20 for slow models like Codex.")
     sp_run.add_argument("--output-dir", type=str, default=None, help="Override results directory")
     sp_run.add_argument("--smoke-test", action="store_true", help="Run smoke test first")
     sp_run.add_argument("--save-to-db", action="store_true", help="Also save results to SQLite DB")
+    sp_run.add_argument(
+        "--resume-from", type=str, default=None, metavar="DIR",
+        help=(
+            "Path to a previous results directory. For each model+condition, "
+            "instances that already have complete, valid data (non-empty raw_response "
+            "for every turn) will be skipped and their data merged into the new results."
+        ),
+    )
     sp_run.set_defaults(func=cmd_run)
 
     # resume

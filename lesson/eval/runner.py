@@ -144,6 +144,102 @@ def retry_with_backoff(
 # Resume helpers — check what's already complete
 # ---------------------------------------------------------------------------
 
+def get_valid_instances(
+    results_dir: str,
+    model_name: str,
+    condition: str,
+) -> Dict[int, List[Dict[str, Any]]]:
+    """Scan a results directory and return valid per-instance turn data.
+
+    A valid instance is one where ALL turns have a non-empty ``raw_response``.
+    The primary source is the JSON checkpoint file written by ``save_incremental``.
+    JSONL log files in ``logs/`` are NOT used as a fallback because they do not
+    carry instance_idx metadata reliably.
+
+    Args:
+        results_dir: Path to a previous results directory (e.g. ``results/sb2_20260320_103109``).
+        model_name:  Model name as it appears in the checkpoint filename
+                     (slashes/colons are replaced with underscores).
+        condition:   Condition name (e.g. ``"error_only"``).
+
+    Returns:
+        Dict mapping instance_idx → list of turn result dicts for VALID instances only.
+        An empty dict is returned if no usable checkpoint is found.
+    """
+    import re
+
+    results_path = Path(results_dir)
+
+    # Locate candidate JSON checkpoint files.
+    # save_incremental() writes: {safe_name}_{label}.json
+    # where safe_name = model_name.replace("/", "_").replace(":", "_")
+    # and label = f"sb2_{condition}" or "sb2_all".
+    safe_name = model_name.replace("/", "_").replace(":", "_")
+
+    # Prefer the per-condition file; fall back to the "all" aggregate.
+    candidates = [
+        results_path / f"{safe_name}_sb2_{condition}.json",
+        results_path / f"{safe_name}_sb2_all.json",
+        results_path / "combined_results.json",
+    ]
+
+    raw_results: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            with open(candidate) as fh:
+                data = json.load(fh)
+        except Exception:
+            continue
+
+        # Locate the list of per-turn result dicts under the condition key.
+        sb2_key = f"sb2_{condition}"
+
+        # For per-condition or "all" files: top-level has sb2_{condition} → {results: [...]}
+        if sb2_key in data and isinstance(data[sb2_key], dict):
+            candidates_results = data[sb2_key].get("results", [])
+            # Filter to the correct condition (the "all" file contains all conditions)
+            raw_results = [r for r in candidates_results if r.get("condition") == condition]
+            if raw_results:
+                break
+
+        # For combined_results.json: {model_name: {sb2_{condition}: {results: [...]}}}
+        if model_name in data:
+            model_data = data[model_name]
+            if sb2_key in model_data and isinstance(model_data[sb2_key], dict):
+                raw_results = [
+                    r for r in model_data[sb2_key].get("results", [])
+                    if r.get("condition") == condition
+                ]
+                if raw_results:
+                    break
+
+    if not raw_results:
+        return {}
+
+    # Group turns by instance_idx
+    from collections import defaultdict
+    instance_turns: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for turn in raw_results:
+        idx = turn.get("instance_idx")
+        if idx is not None:
+            instance_turns[idx].append(turn)
+
+    # Sort turns within each instance by turn_idx for deterministic ordering
+    for idx in instance_turns:
+        instance_turns[idx].sort(key=lambda t: t.get("turn_idx", 0))
+
+    # Keep only instances where every turn has a non-empty raw_response
+    valid: Dict[int, List[Dict[str, Any]]] = {}
+    for idx, turns in instance_turns.items():
+        all_valid = all(t.get("raw_response", "").strip() for t in turns)
+        if all_valid:
+            valid[idx] = turns
+
+    return valid
+
+
 def get_completed_cells(
     db_path: Optional[Path] = None,
 ) -> Set[Tuple[str, str]]:

@@ -288,6 +288,7 @@ def run_sb2_pilot(
     n_turns: int = 6,
     conditions: List[str] = ["correction", "practice_only"],
     max_parallel: int = 1,
+    completed_instances: Optional[Dict[str, Dict[int, list]]] = None,
 ) -> Dict[str, Any]:
     """Run minimal SB2 pilot: feedback condition comparisons on a few instances.
 
@@ -310,14 +311,20 @@ def run_sb2_pilot(
         "reformatted_correction"  — correct answer presented as a training example
 
     Args:
-        client:              An LLMClient instance (must implement .multi_turn()).
-        tier:                STS difficulty tier for all instances.
-        n_initial_examples:  Number of training examples shown as context.
-        n_instances:         Number of independent STS instances.
-        n_turns:             Number of test turns per (instance, condition) cell.
-        conditions:          List of feedback condition names to evaluate.
-        max_parallel:        Maximum number of (instance, condition) cells to run
-                             in parallel. Defaults to 1 (sequential).
+        client:               An LLMClient instance (must implement .multi_turn()).
+        tier:                 STS difficulty tier for all instances.
+        n_initial_examples:   Number of training examples shown as context.
+        n_instances:          Number of independent STS instances.
+        n_turns:              Number of test turns per (instance, condition) cell.
+        conditions:           List of feedback condition names to evaluate.
+        max_parallel:         Maximum number of (instance, condition) cells to run
+                              in parallel. Defaults to 1 (sequential).
+        completed_instances:  Optional dict mapping condition → {instance_idx → list
+                              of turn result dicts} for instances that were already
+                              successfully evaluated and should not be re-run.
+                              Valid instances are merged with newly-run data before
+                              building the summary. Pass the output of
+                              ``get_valid_instances()`` (one per condition).
 
     Returns:
         {
@@ -330,6 +337,15 @@ def run_sb2_pilot(
     model_name = getattr(client, "name", "unknown")
     log = InteractionLog(f"{model_name}_sb2")
     print_lock = threading.Lock()
+
+    # Normalise completed_instances: condition → {inst_idx → [turn_dicts]}
+    _completed: Dict[str, Dict[int, list]] = completed_instances or {}
+
+    # Seed all_results with any already-completed turn data so summaries
+    # correctly account for all instances (resumed + newly run).
+    for cond_turns in _completed.values():
+        for turn_list in cond_turns.values():
+            all_results.extend(turn_list)
 
     # ------------------------------------------------------------------
     # Pre-generate all instances and build the list of cells
@@ -368,6 +384,14 @@ def run_sb2_pilot(
         print(f"  Vocabulary: {vocab_line}")
 
         for condition in conditions:
+            # Skip instances that are already complete
+            if inst_idx in _completed.get(condition, {}):
+                with print_lock:
+                    print(
+                        f"  [SKIP] instance {inst_idx}, condition={condition!r} "
+                        f"— already complete (resumed)"
+                    )
+                continue
             cells.append({
                 "inst_idx": inst_idx,
                 "condition": condition,
@@ -564,6 +588,19 @@ def run_sb2_pilot(
                     with print_lock:
                         print(f"    ERROR on turn {turn_idx}: {exc}")
                     raw_response = ""
+
+            # GUARD: If we still got an empty response after all retries,
+            # abort this instance to avoid recording bad data. Incomplete
+            # instances are excluded by get_valid_instances() on resume.
+            if not raw_response.strip():
+                with print_lock:
+                    print(
+                        f"    ABORT instance {inst_idx}, condition={condition!r}, "
+                        f"turn {turn_idx}: empty response after retries "
+                        f"(API error / rate limit / budget exhaustion). "
+                        f"Discarding {len(cell_results)} prior turns for this cell."
+                    )
+                return []  # Return nothing — don't pollute results
 
             # Tiered extraction: JSON → symbol-aware → regex
             model_answer = extract_answer(
