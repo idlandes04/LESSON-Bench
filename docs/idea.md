@@ -977,13 +977,18 @@ See `docs/observations.md` for full results table.
 
 **Deferred:** Grok (incomplete data), Flash-Lite (too low), Kimi/MiniMax (don't test unique hypotheses), Qwen-3-Coder local (anomalous). Can add back for production if pilot reveals something worth chasing.
 
-### Phase 2.5 — Gemini Flash Production (N=25, NEXT)
+### Phase 2.5 — Gemini Flash Production (N=25, COMPLETE)
 
-Run Gemini 3 Flash at full statistical power (N=25, 4 core conditions) via Gemini API before touching the Kaggle budget. Flash is cheap (~$0.11) and serves as the baseline model (Google judge appeal). With N=25 we get 4% accuracy resolution per turn (vs 33% at N=3), smooth trajectory curves, and 95% CIs tight enough to detect effects as small as ±2.3 percentage points on FLR. This run informs:
-- Whether the eval protocol produces clean, interpretable results at scale
-- Whether Flash shows any feedback learning signal (baseline expectation: FLR ≈ 0)
-- Whether any modifications are needed before the expensive 5-model Kaggle run
-- Refinement of hypotheses H1-H18 based on the first real data
+**Completed 2026-03-19.** Gemini 3 Flash at full statistical power (N=25, 4 core conditions) via Gemini API. 1,200 API calls, 180.5 min runtime, 0 errors. Results in `docs/observations_flash_n25.md`.
+
+**Key findings:**
+- **FLR ≈ 0 (+0.007)** — Flash does not differentially learn from corrections vs practice. Both correction and practice_only show identical learning slopes (+0.100 vs +0.093).
+- **Answer effect dominates (+16.3%)** — The 2×2 factorial reveals that seeing correct answers is the entire signal. Conditions with answer visibility (correction 53.7%, practice_only 52.0%) far outperform those without (no_feedback 40.0%, error_only 33.0%).
+- **Evaluation effect is near zero (-2.7%)** — Knowing "correct/incorrect" without the answer provides no learning benefit.
+- **error_only < no_feedback** — Error signals without corrective information may actively harm in-context processing. This is a potentially publishable finding if it replicates.
+- **The benchmark works.** Identical turn-0 baselines (36% across all conditions), clean condition separation, interpretable trajectories. Tier 2 difficulty is appropriate.
+
+These findings confirm the baseline expectation (FLR ≈ 0 for a non-code-trained model) and validate the eval protocol at scale. The critical question for the production run: do code-trained or reasoning-tuned models show FLR > 0?
 
 ### Phase 3 — Production (5 models via Kaggle SDK, $500 allocation)
 
@@ -1062,8 +1067,8 @@ Comparing quantized local models (Q4_K_M, Q5_K_M) with full-precision API models
 
 - **Day 1 (Mar 18): DONE.** STS generator, evaluation pipeline, SB2 pilot framework, LM Studio + OpenRouter clients built and validated. Gemini Flash SB2 pilot (3 instances, 3 conditions) completed.
 - **Day 2 (Mar 19): DONE.** Full SB1 broad scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed (log pruning race, Unicode, context size, JSON schema caching). 8-model SB2 pilot selection complete. SB2 pilot (8 models, N=3, 4 core conditions) completed via OpenRouter. Full codebase refactoring: consolidated model configs into registry, extracted shared runner infrastructure (CircuitBreaker, retry_with_backoff, resume), built SQLite results store, unified CLI (`python -m lesson`), filled package stubs, 160 tests. Built analysis pipeline with publication-quality PDF report generation (gap chart, 2×2 factorial, trajectory plots, Codex-vs-Chat comparison, model grouping). All pilot results imported to SQLite DB.
-- **Day 3 (Mar 20):** Code inspection and cleanup. Gemini 3 Flash production run (N=25, 4 core conditions) via Gemini API. This is the first statistically powered run (~3h, ~$0.11). Analyze Flash results for real signal before committing Kaggle budget.
-- **Days 4-5 (Mar 21-22):** Analyze Flash N=25 results. Evaluate whether eval protocol needs modification. Finalize 5-model selection for production. Adjust hypotheses based on Flash findings.
+- **Day 3 (Mar 19 evening): DONE.** Gemini 3 Flash production run (N=25, 4 core conditions) via Gemini API. 180.5 min, 0 errors. Key finding: FLR ≈ 0, answer effect dominates (+16.3%), evaluation effect near zero. error_only < no_feedback (potentially publishable). Full analysis in `docs/observations_flash_n25.md`.
+- **Days 4-5 (Mar 20-21):** Analyze Flash N=25 results in depth. Evaluate whether eval protocol needs modification. Finalize 5-model selection for production. Adjust hypotheses based on Flash findings.
 - **Days 6-10 (Mar 23-27):** Production SB2 runs (N=25, 4 core conditions) on 5 selected models via Kaggle Benchmarks SDK ($500 allocation). Extended conditions on top 3.
 - **Days 11-14 (Mar 28-31):** Full statistical analysis. Cross-benchmark cognitive profiling. Visualizations.
 - **Days 15-28 (Apr 1-16):** Polish, writeup, submission.
