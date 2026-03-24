@@ -799,15 +799,13 @@ This finding is NOT a flaw — it's an additional finding about how multi-turn c
   - GPT-5.3-Chat + Codex N=25 (Day 4, OpenRouter): ~$100
   - **Total spent: ~$130**
 - **Remaining estimates:**
-  - Gemini Flash N=25 production run (via Gemini API, 4 conditions): ~$0.11
-  - Kaggle SDK production (5 models, N=25, 4 core conditions + extended): ~$200-400 (reserved from $500 Kaggle allocation)
-  - **Total remaining: ~$200-400**
+  - Kaggle SDK production (9 models, N=25, 4 core conditions): ~$200-350 (from $500 Kaggle allocation)
+  - OpenRouter: **$0 remaining** — 3 models already complete
+  - **Total remaining: ~$200-350**
 - Human baselines: **$0** (informal participants, GitHub Pages hosting)
 - Local models: **$0** (RTX 5090 via LM Studio)
-- **Total project estimate: ~$225-430**
-- **Strategy:** Run Gemini Flash at full statistical power (N=25) first via cheap Gemini API (~$0.11). Use those results to validate the eval protocol and refine hypotheses before spending any Kaggle SDK budget on the 5-model production run. Kaggle $500 allocation is reserved exclusively for the final production run — no exploratory spending.
-
-**Note:** Gemini-3.1-Pro consumed >50% of SB1 scan cost due to long reasoning traces (20K max_tokens). For SB2, use Gemini Flash where possible to manage cost. Kaggle SDK models run last to maximize remaining quota.
+- **Total project estimate: ~$330-480**
+- **Strategy update (2026-03-22):** 3 OpenRouter models already complete (Flash, Chat, Codex). Remaining 9 models run via Kaggle SDK. Combined = 12 models across 6 labs. No more OpenRouter spending needed.
 
 ### Composite Score
 
@@ -998,16 +996,41 @@ These findings confirm the baseline expectation (FLR ≈ 0 for a non-code-traine
 - **Answer effect scales with ability.** Codex +21.5% > Flash +16.3% > Chat +9.7%. Better models benefit more from correct examples (multiplicative relationship).
 - **Story direction clear: universal blindness + robustness dissociation.** The remaining question: do reasoning-RL models (DeepSeek-R1) show a different pattern?
 
-### Phase 3 — Production (5 models via Kaggle SDK, $500 allocation)
+### Phase 3 — Production (9 Kaggle SDK models + 3 OpenRouter already complete)
 
-Run full 25-instance SB2 (4 core conditions) on 5 selected models via Kaggle Benchmarks SDK. Model selection informed by Flash N=25 results + pilot directional patterns. Kaggle $500 is reserved exclusively for this phase — no exploratory spending.
+**Kaggle SDK (9 new models):** Gemini 3 Flash/Pro Preview, Claude Opus/Sonnet/Haiku 4.5, GLM 5, Qwen 3 235B, DeepSeek R1/V3.2. All at N=25, 4 core conditions.
+
+**OpenRouter (3 models, ALREADY COMPLETE):** Gemini 3 Flash, GPT-5.3-Chat, GPT-5.3-Codex. Results in SQLite DB, ready for combined analysis.
+
+**Total: 12 models across 6 labs.** This is a required deliverable — judges evaluate via the Kaggle Benchmarks platform.
+
+**Implementation:** Port SB2 multi-turn evaluation to `@kbench.task` format. Each STS instance = one task invocation with 12 sequential `llm.prompt()` calls maintaining chat history. Feedback injection between turns via `kbench.user.send()`. Structured output via `schema=STSAnswer` dataclass. Use `chats.new()` for any isolated sub-conversations. Outer benchmark task wraps `.evaluate()` over the instance DataFrame. Results from both Kaggle and OpenRouter feed into the same SQLite DB and analysis pipeline.
 
 ### Kaggle SDK Models (use quota — $50/day, $500/month)
 
+**Strategy update (2026-03-22):** Run ALL 9 available Kaggle SDK models at full N=25. Combined with 3 existing OpenRouter models (already complete), this gives 12 total models — a strong "universal" claim base across 6 labs.
+
 | Model | SDK String | Cost Tier | Hypothesis |
 |-------|-----------|-----------|------------|
-| **Gemini 3 Flash** | google/gemini-3-flash | Low | Baseline. Judges work at Google. |
-| **Gemini 3.1 Pro** | google/gemini-3.1-pro-preview | Medium | Scale (Flash vs Pro). Expensive due to long reasoning traces. |
+| **Gemini 3 Flash Preview** | google/gemini-3-flash-preview | Low | Baseline. Judges work at Google. |
+| **Gemini 3 Pro Preview** | google/gemini-3-pro-preview | Medium | Scale (Flash vs Pro). Thinking model. |
+| **Claude Opus 4.5** | anthropic/claude-opus-4-5@20251101 | High | Scale ceiling. Strongest Anthropic model. |
+| **Claude Sonnet 4.5** | anthropic/claude-sonnet-4-5@20250929 | Medium | Mid-range Anthropic. Architecture diversity. |
+| **Claude Haiku 4.5** | anthropic/claude-haiku-4-5@20251001 | Low | Scale floor (Claude family). Within-family comparison. |
+| **GLM 5** | zai/glm-5 | Medium | SB1 ceiling (67% T2N8). ZhipuAI representation. |
+| **Qwen 3 235B** | qwen/qwen3-235b-a22b-instruct-2507 | Medium | Largest open-weights MoE. Alibaba representation. |
+| **DeepSeek R1** | deepseek-ai/deepseek-r1-0528 | Medium | Reasoning-RL hypothesis (H3). |
+| **DeepSeek V3.2** | deepseek-ai/deepseek-v3.2 | Medium | Reasoning baseline (H3 control). |
+
+### OpenRouter Models (ALREADY COMPLETE — N=25, 4 conditions)
+
+| Model | Status | Key Result |
+|-------|--------|------------|
+| **Gemini 3 Flash** | DONE | FLR +0.007, answer effect +16.3% |
+| **GPT-5.3-Chat** | DONE | FLR -0.053, correction slope negative (-0.040) |
+| **GPT-5.3-Codex** | DONE | FLR -0.020, eval damage immune (+2.0pp) |
+
+**Total: 12 models across 6 labs (Google, OpenAI, Anthropic, ZhipuAI, Alibaba, DeepSeek).** All results — Kaggle SDK and OpenRouter — feed into the same analysis pipeline and SQLite DB. The Kaggle SDK uses `llm.prompt(message, schema=STSAnswer)` for structured output, eliminating regex parsing entirely. Multi-turn conversations are native — sequential `llm.prompt()` calls maintain chat history automatically.
 
 ### OpenRouter Models (SB1 complete, SB2 pilot ~$15-20)
 
@@ -1077,10 +1100,10 @@ Comparing quantized local models (Q4_K_M, Q5_K_M) with full-precision API models
 - **Day 2 (Mar 19): DONE.** Full SB1 broad scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed (log pruning race, Unicode, context size, JSON schema caching). 8-model SB2 pilot selection complete. SB2 pilot (8 models, N=3, 4 core conditions) completed via OpenRouter. Full codebase refactoring: consolidated model configs into registry, extracted shared runner infrastructure (CircuitBreaker, retry_with_backoff, resume), built SQLite results store, unified CLI (`python -m lesson`), filled package stubs, 160 tests. Built analysis pipeline with publication-quality PDF report generation (gap chart, 2×2 factorial, trajectory plots, Codex-vs-Chat comparison, model grouping). All pilot results imported to SQLite DB.
 - **Day 3 (Mar 19 evening): DONE.** Gemini 3 Flash production run (N=25, 4 core conditions) via Gemini API. 180.5 min, 0 errors. Key finding: FLR ≈ 0, answer effect dominates (+16.3%), evaluation effect near zero. error_only < no_feedback (potentially publishable). Full analysis in `docs/observations_flash_n25.md`.
 - **Day 4 (Mar 20): DONE.** GPT-5.3-Chat N=25 (4 conditions, complete) + GPT-5.3-Codex N=25 (4 conditions, complete with resume after API budget exhaustion). Infrastructure: instance-level resume (`--resume-from DIR`), parallel instance execution (`--max-parallel 20`), empty-response abort guard. Key findings: FLR ≈ 0 across all 3 models (universal feedback blindness confirmed), Codex uniquely immune to evaluation damage (+2.0pp vs Flash -7.0pp, Chat -2.7pp), answer effect scales with ability (Codex +21.5% > Flash +16.3% > Chat +9.7%), robustness-without-responsiveness dissociation in code-trained models. Full analysis in `docs/observations_preliminary_n25.md`. ~$100 OpenRouter spend.
-- **Days 5-6 (Mar 21-22):** Bootstrap CIs on all reported effects. Additional models: Sonnet 4.6, Haiku 4.5, DeepSeek V3.2.
-- **Days 7-10 (Mar 23-27):** Production SB2 runs on remaining models. Extended conditions on top 3. Mechanistic probes.
-- **Days 11-14 (Mar 28-31):** Full statistical analysis. Cross-benchmark cognitive profiling. Visualizations.
-- **Days 15-28 (Apr 1-16):** Polish, writeup, submission.
+- **Days 5-6 (Mar 22-23): IN PROGRESS.** Kaggle SDK integration — port SB2 to `@kbench.task` format. Launch 9-model Kaggle production run (Gemini 3 Flash/Pro, Claude Opus/Sonnet/Haiku 4.5, GLM 5, Qwen 3 235B, DeepSeek R1/V3.2). Combined with 3 existing OpenRouter models = 12 total.
+- **Days 7-10 (Mar 24-27):** Complete Kaggle runs. Bootstrap CIs on all 12 models. Begin visualizations.
+- **Days 11-14 (Mar 28-31):** Full statistical analysis. Visualizations (Gap Chart, 2×2 decomposition, trajectories). Cross-benchmark cognitive profiling.
+- **Days 15-28 (Apr 1-16):** Writeup (Results FIRST), Kaggle notebook, cover image, submission.
 
 ---
 
@@ -1439,11 +1462,11 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 | **Day 2 (Mar 19)** | Broad scan | Full SB1 scan across 19 models (16 OpenRouter + 5 LM Studio). 16 pass filter. Infrastructure bugs fixed. 8-model SB2 pilot selection. Spec v12.0 finalized. | **DONE** | ~$10 |
 | **Day 3 (Mar 20)** | SB2 pilot (EXECUTE) | Run SB2 pilot (8 models, 3 instances, 4 core conditions). **In parallel:** no-feedback + clean-context probes on 1-2 models. Build analysis module so results flow immediately into visualizations. | **DONE** | ~$15-20 |
 | **Day 4 (Mar 20)** | N=25 Chat + Codex | GPT-5.3-Chat (complete, ~160min) + GPT-5.3-Codex (complete with resume, ~41min at 20x parallel). Instance-level resume + parallel execution infrastructure. Story direction: **universal blindness + robustness dissociation**. | **DONE** | ~$100 |
-| **Days 5-7 (Mar 22-24)** | Production ramp | Full 25-instance SB2 (4 core conditions) on selected models. Mechanistic probes on 2-3 models. Build human baseline web tool. Start recruiting. | PENDING | ~$30-50 |
-| **Days 8-12 (Mar 25-29)** | Production complete | Remaining production SB2 runs. Explanation on top 3 models. Misleading on 2 models (3-5 instances). Human baseline collection. **DISCRIMINATORY POWER CHECK.** | PENDING | ~$30-60 |
-| **Days 13-16 (Mar 30-Apr 2)** | Kaggle SDK + analysis | Run Kaggle SDK models (2 models, full SB1 + SB2). Full statistical analysis. All visualizations. Pre-registered hypotheses vs actuals. | PENDING | ~$200-300 |
-| **Days 17-28 (Apr 3-16)** | Polish + submit | Writeup (Results section FIRST). Kaggle benchmark + notebook. Cover image (Gap Chart). Submit before Apr 16 11:59 PM UTC. | PENDING | $0 |
-| **Total** | | | **2 of 7 phases done** | **~$290-445** |
+| **Days 5-6 (Mar 22-23)** | Kaggle SDK integration | Port SB2 to `@kbench.task` format. Connect Kaggle account. Launch 9-model production run. | **IN PROGRESS** | ~$100-150 (Kaggle quota) |
+| **Days 7-10 (Mar 24-27)** | Production complete | Complete 9-model Kaggle run. Bootstrap CIs on all 12 models. Begin visualizations. | PENDING | ~$100-200 (Kaggle quota) |
+| **Days 11-14 (Mar 28-31)** | Analysis + visualization | Full statistical analysis. All visualizations (Gap Chart, 2×2 decomposition, trajectories). Cross-benchmark cognitive profiling. **DISCRIMINATORY POWER CHECK.** | PENDING | $0 |
+| **Days 15-28 (Apr 1-16)** | Writeup + submit | Results section FIRST. Kaggle benchmark notebook. Cover image (Gap Chart). Submit before Apr 16 11:59 PM UTC. | PENDING | $0 |
+| **Total** | | | **4 of 6 phases done** | **~$260-410** |
 
 ---
 
@@ -1463,15 +1486,15 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 10. ~~**Infrastructure hardening**~~ — DONE. Log pruning race condition, Unicode console fix, empty-response fallback, JSON schema caching.
 11. ~~**Spec v12.0**~~ — DONE. Execution-focused scope tightening. CL-Bench added. Thinking traces cut. Misleading/explanation reduced.
 
-### NEXT 48 HOURS — EXECUTE (Days 5-6, Mar 21-22)
+### NEXT 48 HOURS — EXECUTE (Days 5-6, Mar 22-23)
 
-**Priority 1:** Bootstrap CIs on all N=25 effects. Determine which effects are statistically distinguishable from zero. **Priority 2:** Run Sonnet 4.6, Haiku 4.5, DeepSeek V3.2 (reasoning-RL hypothesis). **Priority 3:** Extended conditions (explanation, structured_correction) on Codex + Flash.
+**Priority 0 (CRITICAL): Kaggle SDK Integration.** Port SB2 evaluation to `@kbench.task` format. Connect to Kaggle account, verify $500 budget, confirm 9 models available.
 
-**Priority 2 (Day 3, in parallel):** Run no-feedback + clean-context probes on 1-2 models to understand the SB2 < SB1 gap.
+**Priority 1: Full Kaggle SDK production run (9 models).** Gemini 3 Flash/Pro Preview, Claude Opus/Sonnet/Haiku 4.5, GLM 5, Qwen 3 235B, DeepSeek R1/V3.2. All at N=25, 4 core conditions. Combined with 3 existing OpenRouter results = 12 models across 6 labs.
 
-**Priority 3 (Day 3-4, in parallel):** Build the analysis module so results flow immediately into visualizations. Don't wait for all data before building the pipeline.
+**Priority 2: Bootstrap CIs.** Resample instance-level data on all 12 models. Determine which effects are statistically distinguishable from zero.
 
-**Priority 4 (Day 4):** SB1 extended (N=16, N=32) on existing T2 instances for comparison with SB2's "accumulated examples" effect.
+**Priority 3: Visualizations.** Gap Chart, 2×2 decomposition, per-model trajectories. These tell the entire story for the writeup.
 
 ### WHAT TO DEFER OR CUT
 
@@ -1487,8 +1510,8 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 - N=25 SB2 data on 3 models (Flash, Chat, Codex). Complete factorial for all.
 - **Story direction clear: Universal feedback blindness + code-training robustness dissociation.**
 - H2 partially falsified (no FLR advantage) but reveals novel robustness finding.
-- Next gate: End of Day 6 — do reasoning-RL models (DeepSeek-R1) break the pattern?
-- Models selected for production.
+- Next gate: End of Day 6 (Mar 23) — Kaggle SDK integration complete, 9-model production run launched.
+- Do 9 new models replicate universal blindness? Does DeepSeek-R1 (reasoning-RL) break the pattern?
 
 **Gate: End of Day 12 (Mar 29) — DISCRIMINATORY POWER**
 - Full 25-instance SB2 on 5-6 models complete.
@@ -1518,15 +1541,18 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 | **Budget** | ~$387 + $500 Prolific | ~$410 + $500 Prolific | ~$391 + $500 Prolific | ~$391 total | ~$450-520 total | **~$290-445 total (reduced misleading/extended saves ~$30-50)** |
 | **Execution risk** | Medium | Lower | Lowest | Lowest | Lowest | **Lowest. v12.0 is a scope-tightening release. No new complexity.** |
 
-### v1.5.0 Status (2026-03-19) → v1.6.0 Status (2026-03-20)
+### v1.6.0 Status (2026-03-20) → v1.7.0 Status (2026-03-22)
 
-**N=25 SB2 complete for 3 models.** Gemini 3 Flash, GPT-5.3-Chat, GPT-5.3-Codex — all 4 core conditions. Key findings:
+**N=25 SB2 complete for 3 models. Kaggle SDK integration in progress.**
+
+Key findings (confirmed at N=25):
 - **Universal feedback blindness**: FLR ≈ 0 for all 3 models (Codex -0.020, Flash +0.007, Chat -0.053)
 - **Code hypothesis nuanced**: Code training does NOT improve FLR but DOES create immunity to evaluation damage (+2.0pp vs -7.0pp/-2.7pp). Robustness ≠ responsiveness.
 - **Answer effect scales with ability**: Codex +21.5% > Flash +16.3% > Chat +9.7%
+- **Chat correction is toxic**: Chat's correction slope is negative (-0.040) — corrective framing actively degrades performance vs neutral exposure. Strongest evidence that evaluation signals can harm, not merely fail.
 - **Code hypothesis directionally supported for SB1**: GPT-5.3-Codex (58%) > GPT-5.3-Chat (50%)
-- **Reasoning anomaly flagged**: DeepSeek-R1 gets *worse* with more examples at T1 (53% → 20%)
-- **Claude scale gradient flat**: Opus = Sonnet = 42% at T2N8
+
+Next milestone: Kaggle SDK port + 9-model production run. Combined with 3 OpenRouter models already complete = 12 models across 6 labs.
 - **GLM-5 surprise leader**: Outperforms GPT-5.3 and Claude Opus on novel rule induction
 - **Llama models strikingly weak**: 70B at 8%, Maverick at 0% — training methodology effect
 - **Infrastructure hardened**: JSON schema caching, empty-response fallback, log pruning race fix, Unicode console fix

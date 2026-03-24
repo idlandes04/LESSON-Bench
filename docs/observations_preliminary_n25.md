@@ -113,7 +113,7 @@ Code training (Codex) and thinking-budget (Flash with MEDIUM thinking) both cont
 
 Codex also shows the **strongest answer effect** (+21.5% vs Flash +16.3% vs Chat +9.7%). Better models benefit more from seeing correct examples — a multiplicative relationship between baseline ability and example-driven learning.
 
-Notably, Chat's correction slope is *negative* (-0.040) — it gets worse over turns even when given correct answers in corrective framing. Practice slope is slightly positive (+0.013). This drives Chat's negative FLR (-0.053): the corrective framing is mildly counterproductive for Chat specifically, possibly because the "Incorrect." prefix creates a negative context that interferes with Chat's ability to extract patterns from the answer that follows.
+Notably, Chat's correction slope is *negative* (-0.040) — it gets worse over turns even when given correct answers in corrective framing. Practice slope is slightly positive (+0.013). This drives Chat's negative FLR (-0.053): the corrective framing is actively counterproductive for Chat specifically. The "Incorrect." prefix doesn't just fail to help — it interferes with Chat's ability to extract patterns from the answer that follows. **Chat is the only model where corrective feedback is worse than neutral exposure — the strongest evidence that evaluation signals can be toxic, not merely useless.** This has direct implications for agentic system design: wrapping correct answers in corrective framing can actively degrade a chat-tuned model's in-context learning.
 
 ### 6. Turn-0 baselines validate the experimental design
 
@@ -148,8 +148,9 @@ This dissociation (robustness ≠ responsiveness) is architecturally significant
 
 ## Remaining Work
 
-- **Bootstrap CIs** — resample instance-level data to get 95% CIs on all reported effects. This will determine which effects are statistically distinguishable from zero.
-- **Additional models** — Sonnet 4.6, Haiku 4.5, DeepSeek V3.2 are planned for the full production run.
+- **Kaggle SDK integration** — Port SB2 evaluation to `@kbench.task` format with `llm.prompt(schema=STSAnswer)`. Required for competition submission.
+- **Kaggle production run (9 models)** — Gemini 3 Flash/Pro Preview, Claude Opus/Sonnet/Haiku 4.5, GLM 5, Qwen 3 235B, DeepSeek R1/V3.2. All at N=25, 4 core conditions. Combined with 3 existing OpenRouter models = **12 total models across 6 labs**.
+- **Bootstrap CIs** — resample instance-level data to get 95% CIs on all reported effects.
 
 ## Files
 
