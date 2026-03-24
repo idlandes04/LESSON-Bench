@@ -426,6 +426,8 @@ After the SB1 pilot (Week 1), identify the ONE tier where the target model has *
 
 **Default hypothesis:** Tier 3 with N=4 initial examples will land in the ~40% zone for most frontier models. Adjusted after pilot.
 
+**Why N=8 initial examples for SB2 (post-pilot calibration):** SB1 learning curve data across 4, 8, 16, 32 examples showed that N=8 places most frontier models in the 30–50% accuracy range at the production tier — high enough to demonstrate partial rule induction, but low enough to leave room for feedback-driven improvement. N=4 landed too close to floor for several models (feedback effects undetectable in noise); N=16+ risked ceiling effects where models saturate from examples alone, masking any feedback signal. N=8 is the operating point that maximizes the dynamic range available for the 2×2 factorial to detect answer vs. evaluation effects.
+
 ### Protocol: Dual Implementation (v9.0)
 
 v9.0+ builds **both** a native multi-turn implementation and a single-prompt-with-history fallback. One is selected for production after pilot testing.
@@ -985,42 +987,105 @@ See `docs/observations.md` for full results table.
 - **FLR ≈ 0 (+0.007)** — Flash does not differentially learn from corrections vs practice. Both correction and practice_only show identical learning slopes (+0.100 vs +0.093).
 - **Answer effect dominates (+16.3%)** — The 2×2 factorial reveals that seeing correct answers is the entire signal. Conditions with answer visibility (correction 53.7%, practice_only 52.0%) far outperform those without (no_feedback 40.0%, error_only 33.0%).
 - **Evaluation effect is near zero (-2.7%)** — Knowing "correct/incorrect" without the answer provides no learning benefit.
-- **error_only < no_feedback** — Error signals without corrective information may actively harm in-context processing. This is a potentially publishable finding if it replicates.
+- **error_only < no_feedback (FRAGILE)** — Flash -7.0pp (p=0.07), Chat -2.7pp (p=0.20), Codex +2.0pp (p=0.87). Direction consistent for 2/3 models but only marginally significant for Flash. Needs 10-model replication before claiming as a finding.
 - **The benchmark works.** Identical turn-0 baselines (36% across all conditions), clean condition separation, interpretable trajectories. Tier 2 difficulty is appropriate.
 
 These findings confirm the baseline expectation (FLR ≈ 0 for a non-code-trained model) and validate the eval protocol at scale.
 
 **Updated with N=25 results for 3 models (2026-03-20):**
 - **Universal feedback blindness confirmed.** FLR ≈ 0 for all 3 models: Codex (-0.020), Flash (+0.007), Chat (-0.053). No model differentially learns from corrective framing.
-- **H2 (code-training hypothesis) partially falsified, partially confirmed.** Code training does NOT increase FLR (Codex FLR = -0.020, same as others). But code training DOES create immunity to evaluation damage: Codex +2.0pp vs Flash -7.0pp, Chat -2.7pp. This is a **robustness-without-responsiveness dissociation** — code models tolerate error signals without being harmed, but cannot use them for learning.
-- **Answer effect scales with ability.** Codex +21.5% > Flash +16.3% > Chat +9.7%. Better models benefit more from correct examples (multiplicative relationship).
-- **Story direction clear: universal blindness + robustness dissociation.** The remaining question: do reasoning-RL models (DeepSeek-R1) show a different pattern?
+- **H2 (code-training hypothesis) partially falsified for FLR.** Code training does NOT increase FLR (Codex FLR = -0.020, same as others). Eval damage pattern (Codex +2.0pp vs Flash -7.0pp, Chat -2.7pp) is **directional but statistically fragile** — Flash p=0.07, Chat p=0.20, Codex p=0.87. The "robustness-without-responsiveness dissociation" is a hypothesis for the 10-model run to test, not a confirmed finding from 3 models.
+- **Answer effect scales with ability (ROBUST).** Codex +21.5% > Flash +16.3% > Chat +9.7%. All p < 0.007 paired Wilcoxon. Cohen's d: 1.24, 0.88, 0.55. Better models benefit more from correct examples (multiplicative relationship). This is the strongest finding.
+- **Story direction clear: universal feedback blindness + answer effect dominance.** The robustness dissociation and Chat's negative correction slope are hypotheses to test at scale, not confirmed results. The 10-model run will determine if they are real or N=3 artifacts that survived to N=25 by chance with only 1 code-trained model.
 
-### Phase 3 — Production (9 Kaggle SDK models + 3 OpenRouter already complete)
+### Phase 3 — Production (Kaggle SDK models + 3 OpenRouter already complete)
 
-**Kaggle SDK (9 new models):** Gemini 3 Flash/Pro Preview, Claude Opus/Sonnet/Haiku 4.5, GLM 5, Qwen 3 235B, DeepSeek R1/V3.2. All at N=25, 4 core conditions.
+**Kaggle SDK:** 27 models available. Budget-constrained selection below targets maximum scientific value from $450 allocation.
 
 **OpenRouter (3 models, ALREADY COMPLETE):** Gemini 3 Flash, GPT-5.3-Chat, GPT-5.3-Codex. Results in SQLite DB, ready for combined analysis.
 
-**Total: 12 models across 6 labs.** This is a required deliverable — judges evaluate via the Kaggle Benchmarks platform.
+**Implementation:** Port SB2 multi-turn evaluation to `@kbench.task` format. Each STS instance = one task invocation with 12 sequential `llm.prompt()` calls maintaining chat history. Feedback injection between turns via `kbench.user.send()`. Structured output via `schema=STSAnswer` dataclass. Use `chats.new()` for any isolated sub-conversations. Outer benchmark task wraps `.evaluate()` over the instance DataFrame. Results from both Kaggle and OpenRouter feed into the same analysis pipeline and SQLite DB.
 
-**Implementation:** Port SB2 multi-turn evaluation to `@kbench.task` format. Each STS instance = one task invocation with 12 sequential `llm.prompt()` calls maintaining chat history. Feedback injection between turns via `kbench.user.send()`. Structured output via `schema=STSAnswer` dataclass. Use `chats.new()` for any isolated sub-conversations. Outer benchmark task wraps `.evaluate()` over the instance DataFrame. Results from both Kaggle and OpenRouter feed into the same SQLite DB and analysis pipeline.
+### All Available Kaggle SDK Models (27 total, as of 2026-03-23)
 
-### Kaggle SDK Models (use quota — $50/day, $500/month)
+```
+anthropic/claude-haiku-4-5@20251001      google/gemini-2.0-flash
+anthropic/claude-opus-4-1@20250805       google/gemini-2.0-flash-lite
+anthropic/claude-opus-4-5@20251101       google/gemini-2.5-flash
+anthropic/claude-opus-4-6@default        google/gemini-2.5-pro
+anthropic/claude-sonnet-4-5@20250929     google/gemini-3-flash-preview
+anthropic/claude-sonnet-4-6@default      google/gemini-3-pro-preview
+anthropic/claude-sonnet-4@20250514       google/gemini-3.1-flash-lite-preview
+deepseek-ai/deepseek-r1-0528            google/gemini-3.1-pro-preview
+deepseek-ai/deepseek-v3.1               google/gemma-3-1b
+deepseek-ai/deepseek-v3.2               google/gemma-3-4b
+qwen/qwen3-235b-a22b-instruct-2507      google/gemma-3-12b
+qwen/qwen3-coder-480b-a35b-instruct     google/gemma-3-27b
+qwen/qwen3-next-80b-a3b-instruct        zai/glm-5
+qwen/qwen3-next-80b-a3b-thinking
+```
 
-**Strategy update (2026-03-22):** Run ALL 9 available Kaggle SDK models at full N=25. Combined with 3 existing OpenRouter models (already complete), this gives 12 total models — a strong "universal" claim base across 6 labs.
+### Budget Plan ($450 Kaggle allocation, $50/day limit)
 
-| Model | SDK String | Cost Tier | Hypothesis |
+**Cost per model estimates (SB1 500 prompts + SB2 1,200 multi-turn prompts):**
+- Low-cost (Flash-tier, Haiku, DeepSeek, Gemma): ~$3-8/model
+- Medium-cost (Sonnet, Pro, Qwen 235B, GLM-5): ~$15-30/model
+- High-cost (Opus models): ~$60-120/model
+
+#### Tier 1 — Must Run (12 models, ~$250 estimated)
+
+Core hypothesis-testing set. Combined with 3 OpenRouter models = 15 total across 7 labs.
+
+| Model | SDK String | Est. Cost | Hypothesis |
 |-------|-----------|-----------|------------|
-| **Gemini 3 Flash Preview** | google/gemini-3-flash-preview | Low | Baseline. Judges work at Google. |
-| **Gemini 3 Pro Preview** | google/gemini-3-pro-preview | Medium | Scale (Flash vs Pro). Thinking model. |
-| **Claude Opus 4.5** | anthropic/claude-opus-4-5@20251101 | High | Scale ceiling. Strongest Anthropic model. |
-| **Claude Sonnet 4.5** | anthropic/claude-sonnet-4-5@20250929 | Medium | Mid-range Anthropic. Architecture diversity. |
-| **Claude Haiku 4.5** | anthropic/claude-haiku-4-5@20251001 | Low | Scale floor (Claude family). Within-family comparison. |
-| **GLM 5** | zai/glm-5 | Medium | SB1 ceiling (67% T2N8). ZhipuAI representation. |
-| **Qwen 3 235B** | qwen/qwen3-235b-a22b-instruct-2507 | Medium | Largest open-weights MoE. Alibaba representation. |
-| **DeepSeek R1** | deepseek-ai/deepseek-r1-0528 | Medium | Reasoning-RL hypothesis (H3). |
-| **DeepSeek V3.2** | deepseek-ai/deepseek-v3.2 | Medium | Reasoning baseline (H3 control). |
+| **Gemini 3 Flash Preview** | google/gemini-3-flash-preview | ~$5 | Validates against OpenRouter Flash results. Google judges. |
+| **Gemini 3 Pro Preview** | google/gemini-3-pro-preview | ~$20 | Scale: Flash vs Pro (H1). |
+| **Gemini 3.1 Pro Preview** | google/gemini-3.1-pro-preview | ~$20 | Latest Google model. Generational comparison. |
+| **Claude Haiku 4.5** | anthropic/claude-haiku-4-5@20251001 | ~$5 | Scale floor, Claude family (H1). |
+| **Claude Sonnet 4.5** | anthropic/claude-sonnet-4-5@20250929 | ~$20 | Mid-range Anthropic (H1). |
+| **Claude Opus 4.5** | anthropic/claude-opus-4-5@20251101 | ~$80 | Scale ceiling. Strongest Anthropic model (H1). |
+| **DeepSeek R1** | deepseek-ai/deepseek-r1-0528 | ~$8 | Reasoning-RL hypothesis (H3). |
+| **DeepSeek V3.2** | deepseek-ai/deepseek-v3.2 | ~$8 | Reasoning baseline, H3 control. |
+| **GLM-5** | zai/glm-5 | ~$15 | SB1 ceiling (67% T2N8). ZhipuAI representation. |
+| **Qwen 3 235B** | qwen/qwen3-235b-a22b-instruct-2507 | ~$20 | Largest open-weights MoE. Alibaba representation. |
+| **Qwen 3 Coder 480B** | qwen/qwen3-coder-480b-a35b-instruct | ~$25 | Code training hypothesis (H2). No GPT-Codex on Kaggle. |
+| **Gemini 2.5 Flash** | google/gemini-2.5-flash | ~$5 | Generational comparison (2.5 vs 3.0). |
+
+#### Tier 2 — If Budget Allows (~$120 estimated, run after Tier 1)
+
+Expands scale comparisons and adds architectural diversity.
+
+| Model | SDK String | Est. Cost | Hypothesis |
+|-------|-----------|-----------|------------|
+| **Claude Sonnet 4.6** | anthropic/claude-sonnet-4-6@default | ~$20 | Newest Sonnet. Generational comparison (4.5 vs 4.6). |
+| **Claude Opus 4.6** | anthropic/claude-opus-4-6@default | ~$80 | Newest Opus. Generational comparison. |
+| **DeepSeek V3.1** | deepseek-ai/deepseek-v3.1 | ~$8 | DeepSeek family depth (V3.1 vs V3.2). |
+| **Qwen 3 Next 80B (Thinking)** | qwen/qwen3-next-80b-a3b-thinking | ~$10 | Reasoning variant vs instruct (H3 extension). |
+
+#### Tier 3 — Skip (low scientific value for cost)
+
+| Model | Reason to Skip |
+|-------|---------------|
+| anthropic/claude-opus-4-1@20250805 | Older Opus, redundant with 4.5/4.6. |
+| anthropic/claude-sonnet-4@20250514 | Older Sonnet, redundant with 4.5/4.6. |
+| google/gemini-2.0-flash | Two generations old. |
+| google/gemini-2.0-flash-lite | Too weak (likely <15% T2N8). |
+| google/gemini-2.5-pro | Expensive thinking model, redundant with 3.x Pro. |
+| google/gemini-3.1-flash-lite-preview | Likely too weak for SB2. |
+| google/gemma-3-1b, 4b, 12b, 27b | Too small for symbolic reasoning. Likely 0-10% accuracy. |
+| qwen/qwen3-next-80b-a3b-instruct | Redundant with 235B instruct (same family, smaller). |
+
+#### Budget Summary
+
+| Tier | Models | Est. Cost | Cumulative |
+|------|--------|-----------|------------|
+| Tier 1 (must run) | 12 | ~$250 | $250 |
+| Tier 2 (if budget allows) | 4 | ~$120 | $370 |
+| Buffer for retries/overruns | — | $80 | $450 |
+
+**Execution order:** Run cheapest models first (Gemini Flash, Haiku, DeepSeek) to validate pipeline, then medium (Sonnet, Pro, Qwen, GLM), then expensive (Opus). This catches bugs early before spending on Opus.
+
+**Combined with OpenRouter:** Tier 1 alone gives 15 models across 7 labs (Google, Anthropic, DeepSeek, ZhipuAI, Alibaba, OpenAI via OpenRouter x2). Tier 2 extends to 19 models.
 
 ### OpenRouter Models (ALREADY COMPLETE — N=25, 4 conditions)
 
@@ -1028,9 +1093,9 @@ These findings confirm the baseline expectation (FLR ≈ 0 for a non-code-traine
 |-------|--------|------------|
 | **Gemini 3 Flash** | DONE | FLR +0.007, answer effect +16.3% |
 | **GPT-5.3-Chat** | DONE | FLR -0.053, correction slope negative (-0.040) |
-| **GPT-5.3-Codex** | DONE | FLR -0.020, eval damage immune (+2.0pp) |
+| **GPT-5.3-Codex** | DONE | FLR -0.020, eval damage +2.0pp (fragile, p=0.87) |
 
-**Total: 12 models across 6 labs (Google, OpenAI, Anthropic, ZhipuAI, Alibaba, DeepSeek).** All results — Kaggle SDK and OpenRouter — feed into the same analysis pipeline and SQLite DB. The Kaggle SDK uses `llm.prompt(message, schema=STSAnswer)` for structured output, eliminating regex parsing entirely. Multi-turn conversations are native — sequential `llm.prompt()` calls maintain chat history automatically.
+**The Kaggle SDK uses `llm.prompt(message, schema=STSAnswer)` for structured output, eliminating regex parsing entirely. Multi-turn conversations are native — sequential `llm.prompt()` calls maintain chat history automatically.**
 
 ### OpenRouter Models (SB1 complete, SB2 pilot ~$15-20)
 
@@ -1508,8 +1573,8 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 
 **Gate: End of Day 4 (Mar 20) — PASSED**
 - N=25 SB2 data on 3 models (Flash, Chat, Codex). Complete factorial for all.
-- **Story direction clear: Universal feedback blindness + code-training robustness dissociation.**
-- H2 partially falsified (no FLR advantage) but reveals novel robustness finding.
+- **Story direction clear: Universal feedback blindness + answer effect dominance.**
+- H2 partially falsified (no FLR advantage). Eval damage dissociation is directional but statistically fragile (needs 10-model confirmation).
 - Next gate: End of Day 6 (Mar 23) — Kaggle SDK integration complete, 9-model production run launched.
 - Do 9 new models replicate universal blindness? Does DeepSeek-R1 (reasoning-RL) break the pattern?
 
@@ -1545,12 +1610,13 @@ Run SB1 at **N=16 and N=32** on at least Gemini Flash (using the 5 existing STS 
 
 **N=25 SB2 complete for 3 models. Kaggle SDK integration in progress.**
 
-Key findings (confirmed at N=25):
-- **Universal feedback blindness**: FLR ≈ 0 for all 3 models (Codex -0.020, Flash +0.007, Chat -0.053)
-- **Code hypothesis nuanced**: Code training does NOT improve FLR but DOES create immunity to evaluation damage (+2.0pp vs -7.0pp/-2.7pp). Robustness ≠ responsiveness.
-- **Answer effect scales with ability**: Codex +21.5% > Flash +16.3% > Chat +9.7%
-- **Chat correction is toxic**: Chat's correction slope is negative (-0.040) — corrective framing actively degrades performance vs neutral exposure. Strongest evidence that evaluation signals can harm, not merely fail.
-- **Code hypothesis directionally supported for SB1**: GPT-5.3-Codex (58%) > GPT-5.3-Chat (50%)
+Key findings (confirmed at N=25, 3 models):
+- **ROBUST — Universal feedback blindness**: FLR ≈ 0 for all 3 models (Codex -0.020, Flash +0.007, Chat -0.053). All p > 0.29 Wilcoxon. CIs span zero cleanly.
+- **ROBUST — Answer effect dominates and scales with ability**: Codex +21.5% (d=1.24) > Flash +16.3% (d=0.88) > Chat +9.7% (d=0.55). All p < 0.007. The strongest and most reliable finding.
+- **ROBUST — Answer effect amplifies over turns**: Early (T0-5) vs Late (T6-11) gap roughly doubles for all 3 models. Correct examples compound; wrong guesses pollute.
+- **FRAGILE — Eval damage dissociation**: Codex +2.0pp vs Flash -7.0pp vs Chat -2.7pp. Only Flash reaches marginal significance (p=0.07). Based on 1 code-trained model. Needs 10-model confirmation.
+- **FRAGILE — Chat correction is toxic**: Chat's correction slope is negative (-0.040). Could be GPT-5.3 Chat-specific rather than a general chat-tuning effect. Needs replication across multiple chat-tuned models.
+- **Code hypothesis for SB1 ability**: GPT-5.3-Codex (58%) > GPT-5.3-Chat (50%). Code training improves pattern extraction, not feedback responsiveness.
 
 Next milestone: Kaggle SDK port + 9-model production run. Combined with 3 OpenRouter models already complete = 12 models across 6 labs.
 - **GLM-5 surprise leader**: Outperforms GPT-5.3 and Claude Opus on novel rule induction

@@ -8,7 +8,7 @@
 import sys
 from pathlib import Path
 
-kaggle_input = Path("/kaggle/input/lesson-bench")
+kaggle_input = Path("/kaggle/input/datasets/isaaclandes/lesson-bench")
 if kaggle_input.exists():
     link_path = Path("/kaggle/working/lesson")
     if not link_path.exists():
