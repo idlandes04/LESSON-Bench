@@ -17,8 +17,8 @@ if kaggle_input.exists():
     link_path = Path("/kaggle/working/lesson")
     if not link_path.exists():
         link_path.symlink_to(kaggle_input)
-    if str(link_path.parent) not in sys.path:
-        sys.path.insert(0, str(link_path.parent))
+    if "/kaggle/working" not in sys.path:
+        sys.path.insert(0, "/kaggle/working")
 
 # %%
 from dataclasses import dataclass
@@ -132,8 +132,12 @@ def lesson_bench_sb1(llm) -> dict:
         n_results = []
         for inst_idx in range(N_INSTANCES):
             with chats.new(f"sb1_n{n}_inst{inst_idx}"):
-                result = lesson_sb1_cell.run(llm, n, inst_idx).result
-                n_results.append(result)
+                cell_run = lesson_sb1_cell.run(llm, n, inst_idx)
+                cell_result = cell_run.result
+                if isinstance(cell_result, dict):
+                    n_results.append(cell_result)
+                else:
+                    print(f"Warning: n={n} inst={inst_idx} failed: {cell_result}")
         all_results[n] = n_results
 
     # Compute per-N accuracy
@@ -178,24 +182,26 @@ def lesson_bench_sb1(llm) -> dict:
 # %%
 run = lesson_bench_sb1.run(kbench.llm)
 result = run.result
+print("run:", run)
+print("result type:", type(result))
 
-print(f"\n{'='*60}")
-print(f"LESSON-Bench SB1 - {result['model']}")
-print(f"{'='*60}")
-print(f"  N=4  avg:  {result['n4_avg']:.1%}")
-print(f"  N=8  avg:  {result['n8_avg']:.1%}")
-print(f"  N=16 avg:  {result['n16_avg']:.1%}")
-print(f"  N=32 avg:  {result['n32_avg']:.1%}")
-print(f"  ---")
-print(f"  N=8 Type R: {result['n8_type_R']:.1%}")
-print(f"  N=8 Type E: {result['n8_type_E']:.1%}")
-print(f"  N=8 Type L: {result['n8_type_L']:.1%}")
-print(f"  ---")
-print(f"  Learning slope: {result['learning_slope']:+.4f}")
-print(f"{'='*60}")
-
-# %%
-run
+if isinstance(result, dict):
+    print(f"\n{'='*60}")
+    print(f"LESSON-Bench SB1 - {result['model']}")
+    print(f"{'='*60}")
+    print(f"  N=4  avg:  {result['n4_avg']:.1%}")
+    print(f"  N=8  avg:  {result['n8_avg']:.1%}")
+    print(f"  N=16 avg:  {result['n16_avg']:.1%}")
+    print(f"  N=32 avg:  {result['n32_avg']:.1%}")
+    print(f"  ---")
+    print(f"  N=8 Type R: {result['n8_type_R']:.1%}")
+    print(f"  N=8 Type E: {result['n8_type_E']:.1%}")
+    print(f"  N=8 Type L: {result['n8_type_L']:.1%}")
+    print(f"  ---")
+    print(f"  Learning slope: {result['learning_slope']:+.4f}")
+    print(f"{'='*60}")
+else:
+    print("Task did not return a dict result. Check run object above.")
 
 # %%
 %choose LESSON-Bench SB1

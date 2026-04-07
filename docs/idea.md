@@ -1087,6 +1087,42 @@ Expands scale comparisons and adds architectural diversity.
 
 **Combined with OpenRouter:** Tier 1 alone gives 15 models across 7 labs (Google, Anthropic, DeepSeek, ZhipuAI, Alibaba, OpenAI via OpenRouter x2). Tier 2 extends to 19 models.
 
+#### Phase 4 — High-N Deep Dive (N=100, 8 models — CONTINGENT ON ADDITIONAL QUOTA)
+
+**Goal:** Resolve the "fragile" findings from N=25. Several effects are directionally interesting but statistically underpowered: eval damage dissociation (Codex +2.0pp vs Flash -7.0pp, p=0.07-0.87), Chat's negative correction slope (-0.040), and whether any model has real nonzero FLR. At N=25 we can detect ≥15pp differences (d ≈ 0.58). At **N=100** we can detect ≥8pp differences (d ≈ 0.28) — enough to definitively resolve effects in the 5-10pp range that the current data can't adjudicate.
+
+**Why N=100:** SE drops from σ/5 to σ/10. For typical σ ≈ 0.3, the 95% CI narrows from ±12pp to ±6pp. This is 4× the instances — the point where even small-to-medium effects become clearly distinguishable from zero. Paired comparisons (same seeds across models) further boost power. N=100 is the standard for clean, publishable results on effects this size.
+
+**Timing:** Run AFTER all N=25 results are in and interpreted. Use N=25 findings to craft a targeted quota request to Kaggle. The N=25 breadth (12+ models, 6 labs) proves discriminatory power and tells the story. N=100 depth on 8 models resolves the open questions and makes the fragile findings robust.
+
+**The 8 models:**
+
+| Model | SDK String | Est. Cost (N=100) | Why |
+|-------|-----------|-------------------|-----|
+| **DeepSeek R1** | deepseek-ai/deepseek-r1-0528 | ~$35 | Reasoning-RL hypothesis (H3) is the most open question in the entire benchmark. Rate-limited in pilot, incomplete data. Does RL training teach error-signal processing? N=100 resolves this definitively. The R1-vs-V3.2 comparison is the cleanest within-family test of reasoning training we have. |
+| **DeepSeek V3.2** | deepseek-ai/deepseek-v3.2 | ~$35 | Paired control for R1. Same family, NOT reasoning-trained. The R1/V3.2 comparison at N=100 is the definitive test of H3 — does reasoning-RL change feedback processing? Without V3.2 at the same N, R1 results are uninterpretable. |
+| **Gemini 3.1 Pro Preview** | google/gemini-3.1-pro-preview | ~$80 | Google flagship reasoning model. Scale comparison vs Flash (already at N=25). If Pro's additional reasoning capability breaks the universal blindness pattern, that's the headline finding. |
+| **Gemini 3 Flash Preview** | google/gemini-3-flash-preview | ~$20 | Already at N=25 via OpenRouter. Extending to N=100 via Kaggle SDK validates cross-platform consistency AND provides the Flash baseline for the Pro comparison at matched N. Cheapest model in the set — high value per dollar. |
+| **Claude Opus 4.6** | anthropic/claude-opus-4-6@default | ~$300 | Scale ceiling. The most capable Anthropic model. If ANY model breaks universal feedback blindness through sheer capability, it's this one. The Opus/Sonnet comparison at N=100 is the definitive scale test (H1). Expensive but irreplaceable — no other model occupies this niche. |
+| **Claude Sonnet 4.6** | anthropic/claude-sonnet-4-6@default | ~$80 | Paired with Opus for scale comparison (H1). Showed strongest pilot FLR (+0.08) and biggest correction-vs-no_feedback gap (+28pp) of any model. N=100 determines once and for all whether Sonnet has real nonzero FLR or if the pilot was noise. |
+| **GPT-5.3-Chat** | (OpenRouter — already at N=25) | ~$80 | Chat's negative correction slope (-0.040) is the most provocative fragile finding — corrective framing actively *hurts* a chat-tuned model. At N=100, we can confirm/refute this. Also provides the chat-tuned baseline for the Codex code-training comparison (H2) at definitive power. |
+| **GPT-5.3-Codex** | (OpenRouter — already at N=25) | ~$80 | The robustness-without-responsiveness dissociation (eval damage +2.0pp vs Flash -7.0pp, Chat -2.7pp) is the most nuanced finding but currently at p=0.87 for Codex. N=100 resolves whether code-training genuinely creates error-signal immunity (H2). The Codex/Chat pair at N=100 is the definitive code-training test. |
+
+**Estimated additional cost: ~$810** (8 models × 75 additional instances × 4 conditions × 12 turns; reuse existing N=25 data). Opus dominates at ~$300 — if budget is tight, drop Opus and run 7 models for ~$510.
+
+**Execution plan:**
+1. Complete all N=25 runs first (Tier 1 + Tier 2 Kaggle models). This is the core submission dataset — 12+ models, 6 labs, universal feedback blindness.
+2. Interpret N=25 results across all models. Identify which fragile findings survived breadth replication and which collapsed.
+3. Email Kaggle requesting additional quota, backed by N=25 evidence: "We have [X] models showing universal feedback blindness across 6 labs. The 2×2 factorial decomposition reveals answer-driven learning with zero evaluation effect. Several critical effects — reasoning-RL hypothesis, code-training robustness dissociation, scale effects — are at the margin of statistical detection. An additional ~$810 on 8 targeted models at N=100 would make these findings publication-grade."
+4. If quota granted: run the 8 models at N=100 (only the additional 75 instances per model — seeds are deterministic and nested, so existing N=25 data is reused).
+5. If quota denied or partially granted: prioritize by cost-efficiency. DeepSeek R1+V3.2 ($70 for the pair) and Gemini Flash+Pro ($100 for the pair) are the highest-value comparisons. Claude Opus is the first to cut if budget is constrained.
+
+**Why these 8:**
+- **4 matched pairs** testing 3 hypotheses: R1/V3.2 (reasoning-RL, H3), Codex/Chat (code-training, H2), Opus/Sonnet (scale, H1), Pro/Flash (scale + reasoning, H1).
+- Each pair has a specific open question that N=25 cannot resolve but N=100 can.
+- Spans 4 labs (DeepSeek, Google, Anthropic, OpenAI) — the major frontier providers.
+- The GPT-5.3 pair runs on OpenRouter (not Kaggle SDK), so they don't consume Kaggle quota — only the 6 Kaggle models need additional allocation.
+
 ### OpenRouter Models (ALREADY COMPLETE — N=25, 4 conditions)
 
 | Model | Status | Key Result |
