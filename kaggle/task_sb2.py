@@ -194,15 +194,16 @@ def lesson_sb2_cell(llm, instance_idx: int, condition: str) -> dict:
 
 # %%
 @task(
-    name="LESSON-Bench SB2",
+    name="lesson_bench_sb2",
     description=(
         "Feedback learning rate benchmark. Tests whether models learn "
         "differentially from corrective feedback vs. neutral answer exposure "
         "using procedurally generated symbolic transformation systems. "
-        "2x2 factorial: 4 conditions x 25 instances x 12 turns."
+        "2x2 factorial: 4 conditions x 25 instances x 12 turns. "
+        "Leaderboard scalar is FLR (feedback learning rate)."
     ),
 )
-def lesson_bench_sb2(llm) -> dict:
+def lesson_bench_sb2(llm) -> float:
     """Full benchmark: 4 feedback conditions x 25 STS instances x 12 turns.
 
     Returns per-condition accuracy, FLR, factorial effects, and per-turn
@@ -268,7 +269,7 @@ def lesson_bench_sb2(llm) -> dict:
     trajectories = {c: per_turn(c) for c in CORE_CONDITIONS}
     slopes = {c: slope(trajectories[c]) for c in CORE_CONDITIONS}
 
-    return {
+    result = {
         "correction_avg": round(ca, 4),
         "practice_avg": round(pa, 4),
         "error_avg": round(ea, 4),
@@ -292,6 +293,8 @@ def lesson_bench_sb2(llm) -> dict:
         "n_turns": N_TURNS,
         "tier": TIER,
     }
+    print(f"Full SB2 results: {result}")
+    return result["flr"]
 
 # %% [markdown]
 # ## Run
@@ -299,23 +302,7 @@ def lesson_bench_sb2(llm) -> dict:
 # %%
 run = lesson_bench_sb2.run(kbench.llm)
 result = run.result
-
-print(f"\n{'='*60}")
-print(f"LESSON-Bench SB2 - {result['model']}")
-print(f"{'='*60}")
-print(f"  Correction avg:   {result['correction_avg']:.1%}")
-print(f"  Practice avg:     {result['practice_avg']:.1%}")
-print(f"  Error-only avg:   {result['error_avg']:.1%}")
-print(f"  No-feedback avg:  {result['nofeedback_avg']:.1%}")
-print(f"  ---")
-print(f"  FLR:              {result['flr']:+.3f}")
-print(f"  Answer effect:    {result['answer_effect']:+.1%}")
-print(f"  Eval effect:      {result['eval_effect']:+.1%}")
-print(f"  Eval damage:      {result['eval_damage']:+.1%}")
-print(f"{'='*60}")
+print(f"Leaderboard score (FLR): {result:+.4f}")
 
 # %%
-run
-
-# %%
-%choose LESSON-Bench SB2
+%choose lesson_bench_sb2

@@ -115,16 +115,17 @@ def lesson_sb1_cell(llm, n_examples: int, instance_idx: int) -> dict:
 
 # %%
 @task(
-    name="LESSON-Bench SB1",
+    name="lesson_bench_sb1",
     description=(
         "Learning curve benchmark. Measures how sample-efficiently models "
         "induce symbolic transformation rules from in-context examples. "
         "Sweeps N = 4, 8, 16, 32 training examples across 25 Tier-2 instances "
         "with 5 test items each (3 regular, 1 extrapolation, 1 lure). "
-        "Single-turn, no feedback. 500 total prompts per model."
+        "Single-turn, no feedback. 500 total prompts per model. "
+        "Leaderboard scalar is AULC (normalized area under the learning curve)."
     ),
 )
-def lesson_bench_sb1(llm) -> dict:
+def lesson_bench_sb1(llm) -> float:
     """Full SB1 benchmark: 4 N-values x 25 instances x 5 test items."""
     all_results = {}
 
@@ -151,30 +152,35 @@ def lesson_bench_sb1(llm) -> dict:
                 if item_type in r["type_accuracy"]]
         return sum(accs) / len(accs) if accs else 0.0
 
-    # Learning curve slope (linear regression over N values)
+    # AULC: normalized area under the learning curve. With evenly-ranked
+    # x-ticks, the trapezoidal area normalized by range reduces to the mean
+    # of the per-N accuracies. Single scalar per model per tier (idea.md).
     accs = [n_avg(n) for n in N_VALUES]
-    log_ns = [len(N_VALUES) - i for i in range(len(N_VALUES))]  # rank order
-    n_pts = len(N_VALUES)
-    xm = sum(range(n_pts)) / n_pts
-    ym = sum(accs) / n_pts
-    num = sum((i - xm) * (accs[i] - ym) for i in range(n_pts))
-    den = sum((i - xm) ** 2 for i in range(n_pts))
-    slope = num / den if den > 0 else 0.0
+    aulc = sum(accs) / len(accs) if accs else 0.0
 
-    return {
+    # RII at N=8: Type E accuracy / Type R accuracy. Measures rule induction
+    # vs. exemplar matching at the primary analysis N (idea.md).
+    r_at_8 = n_type_avg(8, "R")
+    e_at_8 = n_type_avg(8, "E")
+    rii_n8 = (e_at_8 / r_at_8) if r_at_8 > 0 else 0.0
+
+    result = {
+        "aulc": round(aulc, 4),
+        "rii_n8": round(rii_n8, 4),
         "n4_avg": round(n_avg(4), 4),
         "n8_avg": round(n_avg(8), 4),
         "n16_avg": round(n_avg(16), 4),
         "n32_avg": round(n_avg(32), 4),
-        "n8_type_R": round(n_type_avg(8, "R"), 4),
-        "n8_type_E": round(n_type_avg(8, "E"), 4),
+        "n8_type_R": round(r_at_8, 4),
+        "n8_type_E": round(e_at_8, 4),
         "n8_type_L": round(n_type_avg(8, "L"), 4),
-        "learning_slope": round(slope, 4),
         "model": llm.name,
         "n_instances": N_INSTANCES,
         "n_values": N_VALUES,
         "tier": TIER,
     }
+    print(f"Full SB1 results: {result}")
+    return result["aulc"]
 
 # %% [markdown]
 # ## Run
@@ -182,26 +188,7 @@ def lesson_bench_sb1(llm) -> dict:
 # %%
 run = lesson_bench_sb1.run(kbench.llm)
 result = run.result
-print("run:", run)
-print("result type:", type(result))
-
-if isinstance(result, dict):
-    print(f"\n{'='*60}")
-    print(f"LESSON-Bench SB1 - {result['model']}")
-    print(f"{'='*60}")
-    print(f"  N=4  avg:  {result['n4_avg']:.1%}")
-    print(f"  N=8  avg:  {result['n8_avg']:.1%}")
-    print(f"  N=16 avg:  {result['n16_avg']:.1%}")
-    print(f"  N=32 avg:  {result['n32_avg']:.1%}")
-    print(f"  ---")
-    print(f"  N=8 Type R: {result['n8_type_R']:.1%}")
-    print(f"  N=8 Type E: {result['n8_type_E']:.1%}")
-    print(f"  N=8 Type L: {result['n8_type_L']:.1%}")
-    print(f"  ---")
-    print(f"  Learning slope: {result['learning_slope']:+.4f}")
-    print(f"{'='*60}")
-else:
-    print("Task did not return a dict result. Check run object above.")
+print(f"Leaderboard score (AULC): {result:.4f}")
 
 # %%
-%choose LESSON-Bench SB1
+%choose lesson_bench_sb1
